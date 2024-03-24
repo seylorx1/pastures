@@ -1,0 +1,23 @@
+[gd_scene load_steps=3 format=3 uid="uid://c8pi87ot22dje"]
+
+[ext_resource type="Script" path="res://TerrainGenerator.cs" id="1_6ygaj"]
+[ext_resource type="Texture2D" uid="uid://3r5gxwvmmvwu" path="res://heightmap.png" id="2_ppmi8"]
+
+[node name="Node3D" type="Node3D"]
+
+[node name="Camera3D" type="Camera3D" parent="."]
+fov = 70.0
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+script = ExtResource("1_6ygaj")
+Heightmap = ExtResource("2_ppmi8")
+Size = Vector2(2048, 2048)
+Resolution = Vector2i(32, 32)
+Amplitude = 200.0
+
+[node name="Light" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.757975, 0.377206, -0.532156, -0.176837, 0.904114, 0.388982, 0.627856, -0.200733, 0.751999, 0, 2, 6)
+shadow_enabled = true
+shadow_normal_bias = 4.789
+shadow_blur = 1.068
+directional_shadow_split_1 = 0.095
