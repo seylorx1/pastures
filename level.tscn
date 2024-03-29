@@ -9,11 +9,13 @@
 fov = 70.0
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.41364, 0, 1.76837)
 script = ExtResource("1_6ygaj")
 Heightmap = ExtResource("2_ppmi8")
 Size = Vector2(2048, 2048)
-Resolution = Vector2i(32, 32)
+Resolution = 512
 Amplitude = 200.0
+SimplifyThreshold = 0.0
 
 [node name="Light" type="DirectionalLight3D" parent="."]
 transform = Transform3D(0.757975, 0.377206, -0.532156, -0.176837, 0.904114, 0.388982, 0.627856, -0.200733, 0.751999, 0, 2, 6)

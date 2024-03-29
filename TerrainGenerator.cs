@@ -1,743 +1,697 @@
 using Godot;
-using System;
 using System.Collections.Generic;
-using System.Runtime.ExceptionServices;
 
+namespace Pastures;
 
-namespace Pastures
+[Tool]
+public partial class TerrainGenerator : MeshInstance3D
 {
-    [Tool]
-    public partial class TerrainGenerator : MeshInstance3D
+    private Vector2 _scale = new(0.25f, 0.25f);
+    private Vector2 _size = new(32.0f, 32.0f);
+    private int _resolution = 128;
+    private int _vertexResolution = 129;
+
+    [Export] Texture2D Heightmap { get; set; }
+
+    [Export]
+    public Vector2 Size
     {
-        private Vector2 _scale = new(0.25f, 0.25f);
-        private Vector2 _size = new(32.0f, 32.0f);
-        private Vector2I _resolution = new(128, 128);
+        get => _size;
 
-        [Export] Texture2D Heightmap { get; set; }
-
-        [Export]
-        public Vector2 Size
+        set
         {
-            get => _size;
+            _size = new
+            (
+                x: Mathf.Max(value.X, 1),
+                y: Mathf.Max(value.Y, 1)
+            );
 
-            set
+            UpdateMeshScale();
+        }
+    }
+
+    [Export]
+    public int Resolution
+    {
+        get => _resolution;
+
+        // Make sure resolution is never negative, and is always divisible by 2.
+        set
+        {
+            _resolution = 0;
+            for (int i = 9; i > 0; i--)
             {
-                _size = new
-                (
-                    x: Mathf.Max(value.X, 0),
-                    y: Mathf.Max(value.Y, 0)
-                );
-
-                UpdateMeshScale();
-            }
-        }
-
-        [Export]
-        public Vector2I Resolution
-        {
-            get => _resolution;
-
-            // Make sure resolution is never negative, and is always divisible by 2.
-            set
-            {
-                _resolution = new
-                (
-                    x: Mathf.Max(value.X - (value.X % 2), 0),
-                    y: Mathf.Max(value.Y - (value.Y % 2), 0)
-                );
-
-                UpdateMeshScale();
-            }
-        }
-
-        [Export] public float Amplitude { get; set; } = 16.0f;
-
-        // Buttons
-        [Export]
-        public bool GenerateMesh
-        {
-            get => false;
-            set
-            {
-                if (value)
-                    OnGenerateMesh();
-            }
-        }
-
-        public void OnGenerateMesh()
-        {
-            Image heightmapImage = null;
-
-            // Sample heightmap
-            if (Heightmap != null)
-                heightmapImage = Heightmap.GetImage();
-
-            // Init arrays.
-            Godot.Collections.Array surfaceArray = new();
-            surfaceArray.Resize((int)Mesh.ArrayType.Max);
-
-            List<Vector3> uniformVerts = new();
-            List<Vector2> uniformUVs = new();
-            List<int> uniformIndices = new();
-
-            GenerateUniformMesh(heightmapImage, uniformVerts, uniformUVs, uniformIndices);
-
-            Vector3[] uniformNormals = GenerateSmoothNormals(uniformVerts, uniformIndices);
-
-            List<int> regions = CalculateRegionsFromUniformNormals(uniformNormals);
-
-            // We don't need these normals anymore. Unreference them and hope the GC is blessing us.
-            uniformNormals = null;
-
-            int[] regionMap = GenerateRegionMap(regions, uniformVerts.Count);
-
-            // Regenerate mesh, using regions.
-            List<Vector3> verts = new();
-            List<Vector2> uvs = new();
-            int[] indexMap;
-
-            GenerateVertsUVsFromRegionMap(regionMap, uniformVerts, uniformUVs, verts, uvs, out indexMap);
-
-            // Save some memory and clear verts and UV caches.
-            uniformVerts.Clear();
-            uniformUVs.Clear();
-
-            // Calculate indices
-            List<int> indices = CalculateIndicesFromMaps(regionMap, indexMap);
-
-            Vector3[] normals = GenerateSmoothNormals(verts, indices);
-
-            // Apply lists to arrays.
-            surfaceArray[(int)Mesh.ArrayType.Vertex] = verts.ToArray();
-            surfaceArray[(int)Mesh.ArrayType.TexUV] = uvs.ToArray();
-            surfaceArray[(int)Mesh.ArrayType.Normal] = normals;
-            surfaceArray[(int)Mesh.ArrayType.Index] = indices.ToArray();
-
-            // Set the mesh.
-            ArrayMesh arrMesh = new();
-            arrMesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, surfaceArray);
-            Mesh = arrMesh;
-        }
-
-        private float SampleHeight(Vector2 uv, Image heightmapImage = null)
-        {
-            // No heightmap? >:(
-            if (heightmapImage == null)
-                return Mathf.Sin(uv.X * Mathf.Tau) * Mathf.Cos(uv.Y * Mathf.Tau);
-
-            int imageWidth = heightmapImage.GetWidth() - 1;
-            int imageHeight = heightmapImage.GetHeight() - 1;
-
-            Vector2I minPixel = new(Mathf.FloorToInt(uv.X * imageWidth), Mathf.FloorToInt(uv.Y * imageHeight));
-            Vector2I maxPixel = new(Mathf.Clamp(minPixel.X + 1, 0, imageWidth), Mathf.Clamp(minPixel.Y + 1, 0, imageHeight));
-
-            Vector2 percentPixel = new Vector2(uv.X * imageWidth, uv.Y * imageHeight) - (Vector2)minPixel;
-
-            Color topLeftColour = heightmapImage.GetPixel(minPixel.X, maxPixel.Y);
-            Color topRightColour = heightmapImage.GetPixel(maxPixel.X, maxPixel.Y);
-            Color bottomLeftColour = heightmapImage.GetPixel(minPixel.X, minPixel.Y);
-            Color bottomRightColour = heightmapImage.GetPixel(maxPixel.X, minPixel.Y);
-
-            Color topColor = topLeftColour.Lerp(topRightColour, percentPixel.X);
-            Color bottomColor = bottomLeftColour.Lerp(bottomRightColour, percentPixel.X);
-
-            return bottomColor.Lerp(topColor, percentPixel.Y).R;
-        }
-
-        private void GenerateUniformMesh(Image heightmapImage, List<Vector3> verts, List<Vector2> uvs, List<int> indices)
-        {
-            // The starting vertex index of the previous row.
-            // Set to -1 as the first row of vertices shouldn't build triangles.
-            int previousRowIndex = -1;
-
-            // Loop across rows.
-            for (int z = 0; z < _resolution.Y + 1; z++)
-            {
-                // The starting vertex index of this current row.
-                int rowIndex = GetRowIndex(z);
-
-                // Vertex position (Z)
-                float positionZ = (z - _resolution.Y / 2) * _scale.Y;
-
-                // Calculate UV's Y.
-                Vector2 uv = new(0f, (float)z / (_resolution.Y + 1));
-
-                // Loop across columns in row.
-                for (int x = 0; x < _resolution.X + 1; x++)
+                int res = 1 << (4 + i);
+                if (value >= res)
                 {
-                    // Vertex position (X)
-                    float positionX = (x - _resolution.X / 2) * _scale.X;
-
-                    // Calculate UV's X.
-                    uv.X = (float)x / (_resolution.X + 1);
-
-                    // Set vertex grid.
-                    verts.Add(new Vector3(positionX, SampleHeight(uv, heightmapImage) * Amplitude, positionZ));
-
-                    // Set uvs.
-                    uvs.Add(uv);
-
-                    // Build indices only if this isn't the first row
-                    if (previousRowIndex >= 0)
-                    {
-                        // Build first triangle of quad on even indices, assuming we're not at the end.
-                        if (x < _resolution.X)
-                        {
-                            indices.Add(rowIndex + x);
-                            indices.Add(previousRowIndex + x);
-                            indices.Add(previousRowIndex + x + 1);
-                        }
-
-                        // Build second triangle of quad, assuming we're not at the start.
-                        if (x > 0)
-                        {
-                            indices.Add(rowIndex + x);
-                            indices.Add(rowIndex + x - 1);
-                            indices.Add(previousRowIndex + x);
-                        }
-                    }
-                }
-
-                // Cache this row index as previous, ready for next loop.
-                previousRowIndex = rowIndex;
-            }
-        }
-
-        private static Vector3[] GenerateSmoothNormals(List<Vector3> verts, List<int> indices)
-        {
-            // Allocate normals array.
-            // Using an array here as the smooth normals algorthim doesn't scan incrementally.
-            Vector3[] normals = new Vector3[verts.Count];
-
-            // Calculate sum of normals across triangle ABC.
-            for (int triangle = 0; triangle < indices.Count; triangle += 3)
-            {
-                int a = indices[triangle];
-                int b = indices[triangle + 1];
-                int c = indices[triangle + 2];
-
-                Vector3 localisedNormal =
-                (
-                    verts[b] - verts[a]
-                )
-                .Cross
-                (
-                    verts[c] - verts[a]
-                );
-
-                normals[a] += localisedNormal;
-                normals[b] += localisedNormal;
-                normals[c] += localisedNormal;
-            }
-
-            // Normalise normals in array.
-            for (int i = 0; i < normals.Length; i++)
-            {
-                normals[i] = -normals[i].Normalized();
-            }
-
-            return normals;
-        }
-
-        /// <summary>
-        /// A list of vertex indices that can be represented by a quad larger than 1x1. <br/>
-        ///  Index 0 - Min X<br/>
-        ///  Index 1 - Min Z<br/>
-        ///  Index 2 - Max X<br/>
-        ///  Index 3 - Max Z<br/>
-        /// and so forth...
-        /// </summary>
-        private List<int> CalculateRegionsFromUniformNormals(Vector3[] normals)
-        {
-            List<int> regions = new();
-
-            // Iterate over normals.
-            for (int z = 0; z < _resolution.Y + 1; z++)
-            {
-                int rowIndex = GetRowIndex(z);
-
-                for (int x = 0; x < _resolution.X + 1; x++)
-                {
-                    // Check to see if we should create a new region.
-                    bool searchNewRegion = true;
-                    for (int r = 0; r < regions.Count; r += 4)
-                    {
-                        // Check to see if current index is in region bounds.
-                        searchNewRegion =
-                            x < regions[r + 0] ||
-                            z < regions[r + 1] ||
-                            x >= regions[r + 2] ||
-                            z >= regions[r + 3];
-
-                        if (!searchNewRegion)
-                        {
-                            // Stop checking regions.
-                            break;
-                        }
-                    }
-
-                    // Don't look for a new region. This current vertex isn't applicable!
-                    if (!searchNewRegion)
-                        continue;
-
-                    // Start searching for largest possible quad with the same normals.
-
-                    // Get the normal of the initial vertex.
-                    Vector3 searchNormal = normals[rowIndex + x];
-
-                    int width = 0;
-                    int height = 0;
-
-                    //float bestRatio = 0f;
-                    //int bestArea = 0;
-
-                    // Factors in ratio and area.
-                    float bestScore = 0f;
-
-                    int bestWidth = 0;
-                    int bestHeight = 0;
-
-                    // This is used to narrow the search down each iteration.
-                    int widthMaximum = int.MaxValue;
-
-                    int searchRowIndex = rowIndex;
-
-
-                    // Search across to find largest surface area.
-                    do
-                    {
-                        //Perform checks to see if next point is suitable.
-
-                        // If width is within maximum
-                        if (width < widthMaximum)
-                        {
-                            // Increment width.
-                            width++;
-
-                            // Test to see if this new area is intersecting.
-                            bool areaIntersects = false;
-                            for (int r = 0; r < regions.Count; r += 4)
-                            {
-                                areaIntersects =
-                                (
-                                    x < regions[r + 2] &&           // A min x < B max x
-                                    x + width > regions[r + 0] &&   // A max x > B min x
-                                    z < regions[r + 3] &&           // A min z < B max z
-                                    z + height > regions[r + 1]     // A max z > B min z
-                                );
-
-                                // This current area intersects another region.
-                                if (areaIntersects)
-                                {
-                                    // GD.Print($"Region {regions.Count / 4 + 1} intersects with region {(r + 4) / 4}");
-                                    break;
-                                }
-
-                            }
-
-                            // If normals aren't too dissimilar and this area isn't intersecting another region
-                            if (Mathf.Abs(searchNormal.Dot(normals[searchRowIndex + width])) > 0.9999f && !areaIntersects)
-                            {
-                                // If we're still going to be in bounds on the next increment, continue.
-                                if (x + width < _resolution.X)
-                                {
-                                    continue;
-                                }
-                            }
-                            // Normals are too dissimilar or another area is being intersected.
-                            // Go back one width to when it was likely alright.
-                            else
-                            {
-                                width--;
-                            }
-
-                            // We've hit the end of the line.
-                        }
-
-                        // Narrow width maximum, if applicable, for next iteration.
-                        widthMaximum = Mathf.Min(widthMaximum, width);
-
-                        // Never got to check horizontally before hitting a vertex with dissimilar normals.
-                        // This is the end of the loop.
-                        if (width <= 0)
-                            break;
-
-                        // We can't do much with a single strip of vertices.
-                        if (height > 0)
-                        {
-                            // Calculate the area.
-                            int area = width * height;
-
-                            // Calculate the ratio of current area, with the largest value always in the denominator.
-                            float ratio = width < height ? ((float)width) / height : ((float)height) / width;
-
-                            // Calculate the score.
-                            float score = area + area * ratio;
-
-                            if (bestScore < score)
-                            {
-                                bestScore = score;
-                                bestWidth = width;
-                                bestHeight = height;
-                            }
-                        }
-
-                        // Reset width.
-                        width = -1;
-
-                        // Update height and search row index.
-                        height++;
-                        searchRowIndex = GetRowIndex(z + height);
-
-                        // Move on to next row.
-
-                    }
-                    while
-                    (
-                        // Height doesn't exceed bounds
-                        z + height <= _resolution.Y
-                    );
-
-                    // Check to see if we have at least a one-wide or one-deep area that is greater than 1x1.
-                    if ((bestWidth * bestHeight) > 1)
-                    {
-                        regions.Add(x);
-                        regions.Add(z);
-                        regions.Add(x + bestWidth);
-                        regions.Add(z + bestHeight);
-
-                        //GD.Print($"{x}, {z} -> {bestWidth}, {bestHeight}");
-                    }
+                    _resolution = res;
+                    break;
                 }
             }
-
-            return regions;
-        }
-
-        private int[] GenerateRegionMap(List<int> regions, int uniformVertexCount, bool verbose = false)
-        {
-            // A map-like array that caches if any given vertex is in a region or not.
-            int[] vertsRegionMap = new int[uniformVertexCount];
-
-            // Step through regions.
-            for (int r = 0; r < regions.Count; r += 4)
+            if (_resolution == 0)
             {
-                for (int z = regions[r + 1]; z <= regions[r + 3]; z++)
-                {
-                    int rowIndex = GetRowIndex(z);
-                    for (int x = regions[r + 0]; x <= regions[r + 2]; x++)
-                    {
-                        int index = rowIndex + x;
-
-                        // Bottom left corner
-                        if (x == regions[r + 0] && z == regions[r + 1])
-                        {
-                            vertsRegionMap[index] &= ~0b00010000; // Unset any 'ignore' bits.
-                            vertsRegionMap[index] |= 0b00000001;
-                        }
-                        // Bottom right corner
-                        else if (x == regions[r + 2] && z == regions[r + 1])
-                        {
-                            vertsRegionMap[index] &= ~0b00010000; // Unset any 'ignore' bits.
-                            vertsRegionMap[index] |= 0b00000010;
-                        }
-                        // Top left corner
-                        else if (x == regions[r + 0] && z == regions[r + 3])
-                        {
-                            vertsRegionMap[index] &= ~0b00010000; // Unset any 'ignore' bits.
-                            vertsRegionMap[index] |= 0b00000100;
-                        }
-                        // Top right corner
-                        else if (x == regions[r + 2] && z == regions[r + 3])
-                        {
-                            vertsRegionMap[index] &= ~0b00010000; // Unset any 'ignore' bits.
-                            vertsRegionMap[index] |= 0b00001000;
-                        }
-                        // Elsewhere in bounds, assuming it's not already been marked a corner, mark to ignore.
-                        else if (vertsRegionMap[index] == 0)
-                        {
-                            vertsRegionMap[index] |= 0b00010000;
-                        }
-
-                    }
-                }
-
-                if (verbose)
-                {
-                    GD.Print($"\nGenerated Region Map (Step {(r + 4) / 4} / {regions.Count / 4})");
-                    GD.Print($"Region {(r + 4) / 4} Data: Min({regions[r + 0] + 1}, {regions[r + 1] + 1}) Max({regions[r + 2] + 1}, {regions[r + 3] + 1})");
-                    for (int z = _resolution.Y; z >= 0; z--)
-                    {
-                        int rowIndex = GetRowIndex(z);
-                        string rowDebug = $"Row {z:D2}: ";
-                        for (int x = 0; x <= _resolution.X; x++)
-                        {
-                            int flag = vertsRegionMap[rowIndex + x];
-                            rowDebug += flag == 0 ? "[] " : flag == 16 ? "-- " : $"{flag:D2} ";
-                        }
-                        GD.Print(rowDebug);
-                    }
-                }
+                _resolution = 128;
             }
 
-            return vertsRegionMap;
-        }
+            _vertexResolution = _resolution + 1;
 
-        // private int[] GenerateIndexMapFromRegionMap(int[] vertsRegionMap, bool verbose = true)
+            UpdateMeshScale();
+        }
+    }
+
+    [Export] public float Amplitude { get; set; } = 16.0f;
+    [Export] public float SimplifyThreshold { get; set; } = 0.005f;
+
+    // Buttons
+    [Export]
+    public bool GenerateMesh
+    {
+        get => false;
+        set
+        {
+            if (value)
+                OnGenerateMesh();
+        }
+    }
+
+    public void OnGenerateMesh()
+    {
+        Image heightmapImage = null;
+
+        // Sample heightmap
+        if (Heightmap != null)
+            heightmapImage = Heightmap.GetImage();
+
+        // Init arrays.
+        Godot.Collections.Array surfaceArray = new();
+        surfaceArray.Resize((int)Mesh.ArrayType.Max);
+
+        List<Vector3> uniformVerts = new();
+        List<Vector2> uniformUVs = new();
+        List<int> uniformIndices = new();
+
+        GenerateUniformMesh(heightmapImage, uniformVerts, uniformUVs, uniformIndices, out TerrainQuadCell[,] terrainQuadCells);
+
+        Vector3[] uniformNormals = GenerateSmoothNormals(uniformVerts, uniformIndices);
+
+        BitwiseOptimiseTerrainQuadCells(_resolution, 0, 0, uniformNormals, terrainQuadCells);
+
+        // for (int z = _resolution - 1; z >= 0; z--)
         // {
-        //     int[] vertsIndexMap = new int[vertsRegionMap.Length];
-
-        //     // Build vertsIndexMap.
-        //     int indexIncr = 0;
-        //     for (int z = 0; z < _resolution.Y + 1; z++)
+        //     string row = $"Row {z:D2}: ";
+        //     for (int x = 0; x < _resolution; x++)
         //     {
-        //         int rowIndex = GetRowIndex(z);
-
-        //         for (int x = 0; x < _resolution.X + 1; x++)
-        //         {
-        //             // Vertex is within bounds of region. Ignore.
-        //             if ((vertsRegionMap[rowIndex + x] & 0b00010000) == 0b00010000)
-        //             {
-        //                 vertsIndexMap[rowIndex + x] = -1;
-        //             }
-        //             // Convert vertsRegionMap to an index map.
-        //             else
-        //             {
-        //                 vertsIndexMap[rowIndex + x] = indexIncr;
-        //                 indexIncr++;
-        //             }
-        //         }
+        //         if (terrainQuadCells[x, z].IsCellSingleQuad())
+        //             row += "  ";
+        //         else if (terrainQuadCells[x, z].edges == 0b1111)
+        //             row += "• ";
+        //         else if (terrainQuadCells[x, z].IsCornerVertex(TerrainQuadCell.Corner.BottomRight))
+        //             row += "R ";
+        //         else
+        //             row += "# ";
         //     }
-
-
-
-        //     return vertsIndexMap;
+        //     GD.Print(row);
         // }
 
-        private void GenerateVertsUVsFromRegionMap(int[] regionMap, List<Vector3> uniformVerts, List<Vector2> uniformUVs, List<Vector3> verts, List<Vector2> uvs, out int[] indexMap, bool verbose = false)
-        {
-            // Map indexes to region.
-            indexMap = new int[regionMap.Length];
-            int indexIncr = 0;
+        PopulateVertsFromTerrainQuadCells(terrainQuadCells, uniformVerts, uniformUVs, out List<Vector3> verts, out List<Vector2> uvs);
 
-            // Copy over verts and UVs.
-            for (int z = 0; z < _resolution.Y + 1; z++)
-            {
-                int rowIndex = GetRowIndex(z);
-                for (int x = 0; x < _resolution.X + 1; x++)
-                {
-                    bool addVert = false;
+        List<int> indices = BuildIndicesFromTerrainQuadCells(terrainQuadCells);
 
-                    // This is a corner of a region so we need to add this vertex.
-                    int regionBitmask = regionMap[rowIndex + x];
-                    if (regionBitmask > 0 && regionBitmask < 0b00010000)
-                    {
-                        addVert = true;
-                    }
+        Vector3[] normals = GenerateSmoothNormals(verts, indices);
 
-                    // We need to sample around the current vertex to see if there are any adjacent quads.
-                    // If ANY of the neighbours are not marked as a region, add this vertex.
-                    else
-                    {
-                        for (int sampleZ = z - 1; sampleZ <= z + 1; sampleZ++)
-                        {
-                            // Out of bounds.
-                            if (sampleZ < 0 || sampleZ > _resolution.Y)
-                                continue;
+        BitwiseCorrectGapsFromTerrainQuadCells(_resolution, verts, normals, terrainQuadCells);
 
-                            for (int sampleX = x - 1; sampleX <= x + 1; sampleX++)
-                            {
-                                // Out of bounds.
-                                if (sampleX < 0 || sampleX > _resolution.X)
-                                    continue;
 
-                                // Don't need to sample centre.
-                                if (sampleX == x && sampleZ == z)
-                                    continue;
+        // Apply lists to arrays.
+        surfaceArray[(int)Mesh.ArrayType.Vertex] = verts.ToArray();
+        surfaceArray[(int)Mesh.ArrayType.TexUV] = uvs.ToArray();
+        surfaceArray[(int)Mesh.ArrayType.Normal] = normals;
+        surfaceArray[(int)Mesh.ArrayType.Index] = indices.ToArray();
 
-                                // If any sample is not in a region, we need to add a vertex.
-                                if (regionMap[GetRowIndex(sampleZ) + sampleX] == 0)
-                                {
-                                    addVert = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    if (addVert)
-                    {
-                        verts.Add(uniformVerts[rowIndex + x]);
-                        uvs.Add(uniformUVs[rowIndex + x]);
-
-                        indexMap[rowIndex + x] = indexIncr;
-                        indexIncr++;
-                    }
-                    else
-                    {
-                        indexMap[rowIndex + x] = -1;
-                    }
-
-                }
-            }
-
-            if (verbose)
-            {
-                GD.Print($"\nGenerated Index Map ");
-
-                string colDebug = "Column: ";
-                for (int x = 0; x <= _resolution.X; x++)
-                {
-                    colDebug += $"{x:D3} ";
-                }
-                GD.Print(colDebug);
-
-                for (int z = _resolution.Y; z >= 0; z--)
-                {
-                    int rowIndex = GetRowIndex(z);
-                    string rowDebug = $"Row {z:D2}: ";
-                    for (int x = 0; x <= _resolution.X; x++)
-                    {
-                        rowDebug += indexMap[rowIndex + x] == -1 ? "--- " : $"{indexMap[rowIndex + x]:D3} ";
-                    }
-                    GD.Print(rowDebug);
-                }
-            }
-        }
-
-        private List<int> CalculateIndicesFromMaps(int[] vertsRegionMap, int[] vertsIndexMap, bool verbose = false)
-        {
-            List<int> indices = new();
-
-            for (int z = 0; z < _resolution.Y; z++) // Ignore last + 1.
-            {
-                int rowIndex = GetRowIndex(z);
-                int nextRowIndex = GetRowIndex(z + 1);
-
-                for (int x = 0; x < _resolution.X; x++) // Ignore last + 1.
-                {
-                    // Check if the bottom left region mask has been set.
-                    if ((vertsRegionMap[rowIndex + x] & 0b00000001) == 0b00000001)
-                    {
-                        // Iterate up until the top left corner is found.
-
-                        bool foundZ = false;
-
-                        int searchRowIndex = -1;
-                        for (int searchZ = z + 1; searchZ <= _resolution.Y + 1; searchZ++)
-                        {
-                            searchRowIndex = GetRowIndex(searchZ);
-
-                            if ((vertsRegionMap[searchRowIndex + x] & 0b00000100) == 0b00000100)
-                            {
-                                foundZ = true;
-                                break;
-                            }
-                        }
-
-                        if (!foundZ)
-                        {
-                            GD.PrintErr("Top of region not sealed!");
-
-                        }
-
-                        // Iterate right until the bottom right corner is found.
-
-                        bool foundX = false;
-
-                        int searchX;
-                        for (searchX = x + 1; searchX <= _resolution.X + 1; searchX++)
-                        {
-                            if ((vertsRegionMap[rowIndex + searchX] & 0b00000010) == 0b00000010)
-                            {
-                                foundX = true;
-                                break;
-                            }
-                        }
-
-                        if (!foundX)
-                        {
-                            GD.PrintErr("Right of region not sealed!");
-                        }
-
-                        // We don't need to look for the top right hand corner, it can be assumed that it's there.
-
-                        // Triangle 1.
-                        indices.Add(vertsIndexMap[searchRowIndex + x]);
-                        indices.Add(vertsIndexMap[rowIndex + x]);
-                        indices.Add(vertsIndexMap[rowIndex + searchX]);
-
-                        // Triangle 2.
-                        indices.Add(vertsIndexMap[searchRowIndex + searchX]);
-                        indices.Add(vertsIndexMap[searchRowIndex + x]);
-                        indices.Add(vertsIndexMap[rowIndex + searchX]);
-                    }
-
-                    // Check if this vertex has not been ignored.
-                    else if ((vertsRegionMap[rowIndex + x] & 0b00010000) != 0b00010000)
-                    {
-                        // Check if quad points are valid.
-                        if
-                        (
-                            vertsIndexMap[rowIndex + x] < 0 ||
-                            vertsIndexMap[rowIndex + x + 1] < 0 ||
-                            vertsIndexMap[nextRowIndex + x] < 0 ||
-                            vertsIndexMap[nextRowIndex + x + 1] < 0
-                        )
-                            continue;
-
-                        // Triangle 1.
-                        indices.Add(vertsIndexMap[nextRowIndex + x]);
-                        indices.Add(vertsIndexMap[rowIndex + x]);
-                        indices.Add(vertsIndexMap[rowIndex + x + 1]);
-
-                        // Triangle 2.
-                        indices.Add(vertsIndexMap[nextRowIndex + x + 1]);
-                        indices.Add(vertsIndexMap[nextRowIndex + x]);
-                        indices.Add(vertsIndexMap[rowIndex + x + 1]);
-                    }
-                }
-            }
-
-            if (verbose)
-            {
-                for (int idx = 0; idx < indices.Count; idx += 3)
-                {
-                    int triangle = (idx + 3) / 3;
-                    GD.Print($"\nTriangle {2 + (triangle % 2) * -1}: Index {triangle}");
-                    GD.Print(indices[idx + 0]);
-                    GD.Print(indices[idx + 1]);
-                    GD.Print(indices[idx + 2]);
-                }
-            }
-
-            return indices;
-        }
-
-        private void UpdateMeshScale()
-        {
-            _scale = new
-            (
-                _size.X / _resolution.X,
-                _size.Y / _resolution.Y
-            );
-
-            GD.Print
-            (
-                "Mesh scale updated to " +
-                $"[{_scale.X}, {_scale.Y}] " +
-                "(with a size of " +
-                $"[{_size.X}m, {_size.Y}m] " +
-                "at a resolution of " +
-                $"[{_resolution.X}, {_resolution.Y}])"
-            );
-        }
-
-        private int GetRowIndex(int z) =>
-            // Offset
-            z *
-            // Width
-            (_resolution.X + 1);
-
+        // Set the mesh.
+        ArrayMesh arrMesh = new();
+        arrMesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, surfaceArray);
+        Mesh = arrMesh;
     }
+
+    private List<int> BuildIndicesFromTerrainQuadCells(TerrainQuadCell[,] terrainQuadCells)
+    {
+        // Populate indices from terrain quad cells.
+        List<int> indices = new();
+
+        // Find a valid starting quad cell.
+        for (int z = 0; z < _resolution; z++)
+        {
+            for (int x = 0; x < _resolution; x++)
+            {
+                // We only want to look at cells which have a bottom left hand vertex, indicating the start of a quad.
+                // Anything else is a part of a quad.
+                if (!terrainQuadCells[x, z].IsCornerVertex(TerrainQuadCell.Corner.BottomLeft))
+                    continue;
+
+                int[] quadCorners = new int[4];
+
+                // It's important to note here that these quads always have a 1:1 ratio.
+
+                // Search in one direction to find a corner.
+                int length = 0;
+
+                // Move from current x position to the end of the map.
+                for (int searchX = x; searchX < _resolution; searchX++)
+                {
+                    // Once a bottom right hand corner has been detected, set the length and stop looking.
+                    // Note that the length can be 0 for single quads.
+                    if (terrainQuadCells[searchX, z].IsCornerVertex(TerrainQuadCell.Corner.BottomRight))
+                    {
+                        length = searchX - x;
+                        break;
+                    }
+                }
+
+                // The rest of the corners can be extrapolated from the length.
+                quadCorners[(int)TerrainQuadCell.Corner.BottomLeft] = terrainQuadCells[x, z].cornerIndex[(int)TerrainQuadCell.Corner.BottomLeft];
+                quadCorners[(int)TerrainQuadCell.Corner.BottomRight] = terrainQuadCells[x + length, z].cornerIndex[(int)TerrainQuadCell.Corner.BottomRight];
+                quadCorners[(int)TerrainQuadCell.Corner.TopLeft] = terrainQuadCells[x, z + length].cornerIndex[(int)TerrainQuadCell.Corner.TopLeft];
+                quadCorners[(int)TerrainQuadCell.Corner.TopRight] = terrainQuadCells[x + length, z + length].cornerIndex[(int)TerrainQuadCell.Corner.TopRight];
+
+                // With these indices at our disposal, build triangles.
+
+                // Triangle 1.
+                indices.Add(quadCorners[(int)TerrainQuadCell.Corner.TopLeft]);
+                indices.Add(quadCorners[(int)TerrainQuadCell.Corner.BottomLeft]);
+                indices.Add(quadCorners[(int)TerrainQuadCell.Corner.BottomRight]);
+
+                // Triangle 2.
+                indices.Add(quadCorners[(int)TerrainQuadCell.Corner.TopLeft]);
+                indices.Add(quadCorners[(int)TerrainQuadCell.Corner.BottomRight]);
+                indices.Add(quadCorners[(int)TerrainQuadCell.Corner.TopRight]);
+
+            }
+        }
+
+        return indices;
+    }
+
+    private void PopulateVertsFromTerrainQuadCells(TerrainQuadCell[,] terrainQuadCells, List<Vector3> uniformVerts, List<Vector2> uniformUVs, out List<Vector3> verts, out List<Vector2> uvs)
+    {
+        verts = new();
+        uvs = new();
+
+        // Iterate over uniform vertices.
+        for (int z = 0; z < _vertexResolution; z++)
+        {
+            for (int x = 0; x < _vertexResolution; x++)
+            {
+                int copyVertAtIndex = -1;
+
+                // Get surrounding quad cells.
+
+                // Quads with vertex at bottom
+                if (z < _resolution)
+                {
+                    // Quads with vertex at bottom left
+                    if (x < _resolution && terrainQuadCells[x, z].IsCornerVertex(TerrainQuadCell.Corner.BottomLeft))
+                    {
+                        // Set corner index to vert we're just about to add.
+                        terrainQuadCells[x, z].cornerIndex[(int)TerrainQuadCell.Corner.BottomLeft] = verts.Count;
+
+                        // Mark the vert to be copied.
+                        copyVertAtIndex = terrainQuadCells[x, z].uniformCornerIndex[(int)TerrainQuadCell.Corner.BottomLeft];
+                    }
+
+                    // Quads with vertex at bottom right
+                    if (x > 0 && terrainQuadCells[x - 1, z].IsCornerVertex(TerrainQuadCell.Corner.BottomRight))
+                    {
+                        // Set corner index to vert we're just about to add.
+                        terrainQuadCells[x - 1, z].cornerIndex[(int)TerrainQuadCell.Corner.BottomRight] = verts.Count;
+
+                        // Mark the vert to be copied.
+                        copyVertAtIndex = terrainQuadCells[x - 1, z].uniformCornerIndex[(int)TerrainQuadCell.Corner.BottomRight];
+                    }
+                }
+
+                // Quads with vertex at top
+                if (z > 0)
+                {
+                    // Quads with vertex at top left
+                    if (x < _resolution && terrainQuadCells[x, z - 1].IsCornerVertex(TerrainQuadCell.Corner.TopLeft))
+                    {
+                        // Set corner index to vert we're just about to add.
+                        terrainQuadCells[x, z - 1].cornerIndex[(int)TerrainQuadCell.Corner.TopLeft] = verts.Count;
+
+                        // Mark the vert to be copied.
+                        copyVertAtIndex = terrainQuadCells[x, z - 1].uniformCornerIndex[(int)TerrainQuadCell.Corner.TopLeft];
+                    }
+
+                    //Quads with vertex at top right
+                    if (x > 0 && terrainQuadCells[x - 1, z - 1].IsCornerVertex(TerrainQuadCell.Corner.TopRight))
+                    {
+                        // Set corner index to vert we're just about to add.
+                        terrainQuadCells[x - 1, z - 1].cornerIndex[(int)TerrainQuadCell.Corner.TopRight] = verts.Count;
+
+                        // Mark the vert to be copied.
+                        copyVertAtIndex = terrainQuadCells[x - 1, z - 1].uniformCornerIndex[(int)TerrainQuadCell.Corner.TopRight];
+                    }
+                }
+
+                // If the vert at index has been marked, copy into list.
+                if (copyVertAtIndex >= 0)
+                {
+                    verts.Add(uniformVerts[copyVertAtIndex]);
+                    uvs.Add(uniformUVs[copyVertAtIndex]);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Corrects gaps in mesh, introduced by simplifying, by searching for largest quads and moving surrounding verts.
+    /// </summary>
+    public void BitwiseCorrectGapsFromTerrainQuadCells(int searchResolution, List<Vector3> verts, Vector3[] normals, TerrainQuadCell[,] terrainQuadCells)
+    {
+        if (searchResolution < 4)
+            return;
+
+        int halfResolution = searchResolution >> 1;
+
+        for (int sectionZ = 0; sectionZ < _resolution; sectionZ += halfResolution)
+        {
+            for (int sectionX = 0; sectionX < _resolution; sectionX += halfResolution)
+            {
+                // Check to see whether this section is a single quad.
+
+                // These quads start from the bottom left, so ensure this is the case for this section.
+                if (!terrainQuadCells[sectionX, sectionZ].IsCornerVertex(TerrainQuadCell.Corner.BottomLeft))
+                    continue;
+
+                // As quads have a ratio of 1:1, we only need to look in one direction.
+                // Given the minimum quad size is 2x2 cells, we can miss the first cell. (searchX = 1)
+                bool validQuadrant = true;
+                for (int searchX = 0; searchX < halfResolution; searchX++)
+                {
+                    bool isBottomRight = terrainQuadCells[sectionX + searchX, sectionZ].IsCornerVertex(TerrainQuadCell.Corner.BottomRight);
+
+                    if (searchX < halfResolution - 1)
+                    {
+                        if (isBottomRight)
+                        {
+                            validQuadrant = false;
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        if (!isBottomRight)
+                        {
+                            validQuadrant = false;
+                            break;
+                        }
+                    }
+
+                }
+
+                if (!validQuadrant)
+                    continue;
+
+                // Get the positions of the four corners of this quadrant.
+
+                int bottomLeftIndex = terrainQuadCells[sectionX, sectionZ].cornerIndex[(int)TerrainQuadCell.Corner.BottomLeft];
+                int bottomRightIndex = terrainQuadCells[sectionX + halfResolution - 1, sectionZ].cornerIndex[(int)TerrainQuadCell.Corner.BottomRight];
+                int topLeftIndex = terrainQuadCells[sectionX, sectionZ + halfResolution - 1].cornerIndex[(int)TerrainQuadCell.Corner.TopLeft];
+                int topRightIndex = terrainQuadCells[sectionX + halfResolution - 1, sectionZ + halfResolution - 1].cornerIndex[(int)TerrainQuadCell.Corner.TopRight];
+
+                // Now we need to search for vertices that aren't connected, but are aligned with edges.
+                int cellX;
+                int cellZ;
+
+                // Search along bottom edge, if still in bounds.
+                cellZ = sectionZ - 1;
+                if (cellZ >= 0)
+                {
+                    // Search along quad cells, missing the last cell before the end.
+                    // (The last cell has vertex which is corner of the current quad.)
+                    for (cellX = sectionX; cellX < sectionX + halfResolution - 1; cellX++)
+                    {
+                        // Check if vertex exists.
+                        if (terrainQuadCells[cellX, cellZ].IsCornerVertex(TerrainQuadCell.Corner.TopRight))
+                        {
+                            // Get vert index.
+                            int vertIndex = terrainQuadCells[cellX, cellZ].cornerIndex[(int)TerrainQuadCell.Corner.TopRight];
+
+                            // Get vert 'progress' along quad edge as weight.
+                            float weight = (verts[vertIndex].X - verts[bottomLeftIndex].X) / (verts[bottomRightIndex].X - verts[bottomLeftIndex].X);
+
+                            // Set height along quad edge.
+                            verts[vertIndex] = new(verts[vertIndex].X, Mathf.Lerp(verts[bottomLeftIndex].Y, verts[bottomRightIndex].Y, weight), verts[vertIndex].Z);
+
+                            // Set normal along quad edge.
+                            normals[vertIndex] = normals[bottomLeftIndex].Lerp(normals[bottomRightIndex], weight);
+                        }
+                    }
+                }
+
+                // Search along top edge, if still in bounds.
+                cellZ = sectionZ + halfResolution;
+                if (cellZ < _resolution)
+                {
+                    // Search along quad cells, missing the last cell before the end.
+                    // (The last cell has vertex which is corner of the current quad.)
+                    for (cellX = sectionX; cellX < sectionX + halfResolution - 1; cellX++)
+                    {
+                        // Check if vertex exists.
+                        if (terrainQuadCells[cellX, cellZ].IsCornerVertex(TerrainQuadCell.Corner.BottomRight))
+                        {
+                            // Get vert index.
+                            int vertIndex = terrainQuadCells[cellX, cellZ].cornerIndex[(int)TerrainQuadCell.Corner.BottomRight];
+
+                            // Get vert 'progress' along quad edge as weight.
+                            float weight = (verts[vertIndex].X - verts[topLeftIndex].X) / (verts[topRightIndex].X - verts[topLeftIndex].X);
+
+                            // Set height along quad edge.
+                            verts[vertIndex] = new(verts[vertIndex].X, Mathf.Lerp(verts[topLeftIndex].Y, verts[topRightIndex].Y, weight), verts[vertIndex].Z);
+
+                            // Set normal along quad edge.
+                            normals[vertIndex] = normals[topLeftIndex].Lerp(normals[topRightIndex], weight);
+                        }
+                    }
+                }
+
+                // Search along left edge, if still in bounds.
+                cellX = sectionX - 1;
+                if (cellX >= 0)
+                {
+                    // Search along quad cells, missing the last cell before the end.
+                    // (The last cell has vertex which is corner of the current quad.)
+                    for (cellZ = sectionZ; cellZ < sectionZ + halfResolution - 1; cellZ++)
+                    {
+                        // Check if vertex exists.
+                        if (terrainQuadCells[cellX, cellZ].IsCornerVertex(TerrainQuadCell.Corner.TopRight))
+                        {
+                            // Get vert index.
+                            int vertIndex = terrainQuadCells[cellX, cellZ].cornerIndex[(int)TerrainQuadCell.Corner.TopRight];
+
+                            // Get vert 'progress' along quad edge as weight.
+                            float weight = (verts[vertIndex].Z - verts[bottomLeftIndex].Z) / (verts[topLeftIndex].Z - verts[bottomLeftIndex].Z);
+
+                            // Set height along quad edge.
+                            verts[vertIndex] = new(verts[vertIndex].X, Mathf.Lerp(verts[bottomLeftIndex].Y, verts[topLeftIndex].Y, weight), verts[vertIndex].Z);
+
+                            // Set normal along quad edge.
+                            normals[vertIndex] = normals[bottomLeftIndex].Lerp(normals[topLeftIndex], weight);
+                        }
+                    }
+                }
+
+                // Search along right edge, if still in bounds.
+                cellX = sectionX + halfResolution;
+                if (cellX < _resolution)
+                {
+                    // Search along quad cells, missing the last cell before the end.
+                    // (The last cell has vertex which is corner of the current quad.)
+                    for (cellZ = sectionZ; cellZ < sectionZ + halfResolution - 1; cellZ++)
+                    {
+                        // Check if vertex exists.
+                        if (terrainQuadCells[cellX, cellZ].IsCornerVertex(TerrainQuadCell.Corner.TopLeft))
+                        {
+                            // Get vert index.
+                            int vertIndex = terrainQuadCells[cellX, cellZ].cornerIndex[(int)TerrainQuadCell.Corner.TopLeft];
+
+                            // Get vert 'progress' along quad edge as weight.
+                            float weight = (verts[vertIndex].Z - verts[bottomRightIndex].Z) / (verts[topRightIndex].Z - verts[bottomRightIndex].Z);
+
+                            // Set height along quad edge.
+                            verts[vertIndex] = new(verts[vertIndex].X, Mathf.Lerp(verts[bottomRightIndex].Y, verts[topRightIndex].Y, weight), verts[vertIndex].Z);
+
+                            // Set normal along quad edge.
+                            normals[vertIndex] = normals[bottomRightIndex].Lerp(normals[topRightIndex], weight);
+                        }
+                    }
+                }
+            }
+        }
+
+        BitwiseCorrectGapsFromTerrainQuadCells(halfResolution, verts, normals, terrainQuadCells);
+    }
+
+    public void BitwiseOptimiseTerrainQuadCells(int searchResolution, int originX, int originZ, Vector3[] uniformNormals, TerrainQuadCell[,] terrainQuadCells)
+    {
+        if (searchResolution < 4)
+            return;
+
+        // In resolution is assumed to be full, so we need to step it down.
+        // For example, let's assume it's 64 x 64.
+
+        int halfResolution = searchResolution >> 1;
+
+        // Now the resolution is halved to 32 x 32.
+
+        for (int quadrantZ = 0; quadrantZ < searchResolution; quadrantZ += halfResolution)
+        {
+            for (int quadrantX = 0; quadrantX < searchResolution; quadrantX += halfResolution)
+            {
+                // This offsets the search quadrant as a 2x2 of the search resolution.
+                // This can be thought of as the working area.
+
+                // _resolution is referencing the quad count per axis, but we need vertices.
+                // Half resolution is increased by one to allow for searching through quads.
+
+                // The property of this array changes, but it's purpose is to calculate the standard deviation of this quadrant.
+                Vector3[] workingNormals = new Vector3[(halfResolution + 1) * (halfResolution + 1)];
+
+                // Begin calculating standard deviation.
+                Vector3 normalMean = Vector3.Zero;
+
+                // Search through vertices.
+
+                for (int vertexSearchZ = 0; vertexSearchZ < halfResolution + 1; vertexSearchZ++)
+                {
+                    for (int vertexSearchX = 0; vertexSearchX < halfResolution + 1; vertexSearchX++)
+                    {
+                        // Get the location of this loop in index space.
+                        int vertexX = originX + quadrantX + vertexSearchX;
+                        int vertexZ = originZ + quadrantZ + vertexSearchZ;
+
+                        // Get normal
+                        Vector3 normal = uniformNormals[vertexZ * _vertexResolution + vertexX];
+
+                        // Populate search normals array.
+                        workingNormals[vertexSearchZ * (halfResolution + 1) + vertexSearchX] = normal;
+
+                        // Add to normal mean.
+                        normalMean += normal;
+
+                    }
+                }
+
+                // Calculate mean.
+                normalMean /= workingNormals.Length;
+
+                // Begin calculating the variance.
+                Vector3 variance = Vector3.Zero;
+
+                // Update search normals to subtract the mean and square the result.
+                for (int i = 0; i < workingNormals.Length; i++)
+                    workingNormals[i] = (workingNormals[i] - normalMean) * (workingNormals[i] - normalMean);
+
+                // Get the mean of this new value to set the variance.
+                foreach (Vector3 normal in workingNormals)
+                    variance += normal;
+                variance /= workingNormals.Length;
+
+                // While you can't get the standard deviation of a vector (as this metric has loose definitions when working with space)
+                // We can approximate something akin to it by getting the length of this new vector. (it's close because it involves a square root...)
+                float standardDeviation = variance.Length();
+
+                // This area is pretty flat!
+                // We don't need to search for finer details, just blanket this area as a quad.
+                if (standardDeviation < SimplifyThreshold)
+                {
+                    for (int quadSearchZ = 0; quadSearchZ < halfResolution; quadSearchZ++)
+                    {
+                        for (int quadSearchX = 0; quadSearchX < halfResolution; quadSearchX++)
+                        {
+                            int quadX = originX + quadrantX + quadSearchX;
+                            int quadZ = originZ + quadrantZ + quadSearchZ;
+
+                            // Assign sides to quad.
+
+                            bool internalQuad = true;
+
+                            if (quadSearchX == 0)
+                            {
+                                terrainQuadCells[quadX, quadZ].SetExternalEdge(TerrainQuadCell.Edge.Left);
+                                internalQuad = false;
+                            }
+                            if (quadSearchX == halfResolution - 1)
+                            {
+                                terrainQuadCells[quadX, quadZ].SetExternalEdge(TerrainQuadCell.Edge.Right);
+                                internalQuad = false;
+                            }
+                            if (quadSearchZ == 0)
+                            {
+                                terrainQuadCells[quadX, quadZ].SetExternalEdge(TerrainQuadCell.Edge.Down);
+                                internalQuad = false;
+                            }
+                            if (quadSearchZ == halfResolution - 1)
+                            {
+                                terrainQuadCells[quadX, quadZ].SetExternalEdge(TerrainQuadCell.Edge.Up);
+                                internalQuad = false;
+                            }
+
+                            if (internalQuad)
+                                terrainQuadCells[quadX, quadZ].edges = 0b1111;
+                        }
+                    }
+                }
+                // Uh oh, it's bumpy!
+                // We need to keep searching to see if we can find any more nuggets of optimisation.
+                else
+                {
+                    BitwiseOptimiseTerrainQuadCells(halfResolution, originX + quadrantX, originZ + quadrantZ, uniformNormals, terrainQuadCells);
+                }
+            }
+        }
+    }
+
+    private float SampleHeight(Vector2 uv, Image heightmapImage = null)
+    {
+        // No heightmap? >:(
+        if (heightmapImage == null)
+            return Mathf.Sin(uv.X * Mathf.Tau) * Mathf.Cos(uv.Y * Mathf.Tau);
+
+        int imageWidth = heightmapImage.GetWidth() - 1;
+        int imageHeight = heightmapImage.GetHeight() - 1;
+
+        Vector2I minPixel = new(Mathf.FloorToInt(uv.X * imageWidth), Mathf.FloorToInt(uv.Y * imageHeight));
+        Vector2I maxPixel = new(Mathf.Clamp(minPixel.X + 1, 0, imageWidth), Mathf.Clamp(minPixel.Y + 1, 0, imageHeight));
+
+        Vector2 percentPixel = new Vector2(uv.X * imageWidth, uv.Y * imageHeight) - (Vector2)minPixel;
+
+        Color topLeftColour = heightmapImage.GetPixel(minPixel.X, maxPixel.Y);
+        Color topRightColour = heightmapImage.GetPixel(maxPixel.X, maxPixel.Y);
+        Color bottomLeftColour = heightmapImage.GetPixel(minPixel.X, minPixel.Y);
+        Color bottomRightColour = heightmapImage.GetPixel(maxPixel.X, minPixel.Y);
+
+        Color topColor = topLeftColour.Lerp(topRightColour, percentPixel.X);
+        Color bottomColor = bottomLeftColour.Lerp(bottomRightColour, percentPixel.X);
+
+        return bottomColor.Lerp(topColor, percentPixel.Y).R;
+    }
+
+    private void GenerateUniformMesh(Image heightmapImage, List<Vector3> verts, List<Vector2> uvs, List<int> indices, out TerrainQuadCell[,] terrainQuads)
+    {
+        terrainQuads = new TerrainQuadCell[_resolution, _resolution];
+
+        // Loop across rows.
+        for (int z = 0; z < _vertexResolution; z++)
+        {
+            // Vertex position (Z)
+            float positionZ = (z - _vertexResolution / 2) * _scale.Y;
+
+            // Calculate UV's Y.
+            Vector2 uv = new(0f, (float)z / _vertexResolution);
+
+            // Loop across columns in row.
+            for (int x = 0; x < _vertexResolution; x++)
+            {
+                // Vertex position (X)
+                float positionX = (x - _vertexResolution / 2) * _scale.X;
+
+                // Calculate UV's X.
+                uv.X = (float)x / _vertexResolution;
+
+                // Set vertex grid.
+                verts.Add(new Vector3(positionX, SampleHeight(uv, heightmapImage) * Amplitude, positionZ));
+
+                // Set uvs.
+                uvs.Add(uv);
+
+                // Build indices only if this isn't the first vertex
+                if (z > 0 && x > 0)
+                {
+                    // Build quad.
+                    int topLeft = z * _vertexResolution + (x - 1);
+                    int topRight = z * _vertexResolution + x;
+                    int bottomLeft = (z - 1) * _vertexResolution + (x - 1);
+                    int bottomRight = (z - 1) * _vertexResolution + x;
+
+                    // Add triangle 1 to indices.
+                    indices.Add(topLeft);
+                    indices.Add(bottomLeft);
+                    indices.Add(bottomRight);
+
+                    // Add triangle 2 to indices.
+                    indices.Add(topLeft);
+                    indices.Add(bottomRight);
+                    indices.Add(topRight);
+
+                    // Init quad.
+                    terrainQuads[x - 1, z - 1] = new
+                    (
+                        topLeft,
+                        topRight,
+                        bottomLeft,
+                        bottomRight
+                    );
+                }
+
+            }
+        }
+    }
+
+    private static Vector3[] GenerateSmoothNormals(List<Vector3> verts, List<int> indices)
+    {
+        // Allocate normals array.
+        // Using an array here as the smooth normals algorthim doesn't scan incrementally.
+        Vector3[] normals = new Vector3[verts.Count];
+
+        // Calculate sum of normals across triangle ABC.
+        for (int triangle = 0; triangle < indices.Count; triangle += 3)
+        {
+            int a = indices[triangle];
+            int b = indices[triangle + 1];
+            int c = indices[triangle + 2];
+
+            Vector3 localisedNormal =
+            (
+                verts[b] - verts[a]
+            )
+            .Cross
+            (
+                verts[c] - verts[a]
+            );
+
+            normals[a] += localisedNormal;
+            normals[b] += localisedNormal;
+            normals[c] += localisedNormal;
+        }
+
+        // Normalise normals in array.
+        for (int i = 0; i < normals.Length; i++)
+        {
+            normals[i] = -normals[i].Normalized();
+        }
+
+        return normals;
+    }
+
+    private void UpdateMeshScale()
+    {
+        _scale = new
+        (
+            _size.X / _resolution,
+            _size.Y / _resolution
+        );
+
+        GD.Print
+        (
+            "Mesh scale updated to " +
+            $"[{_scale.X}, {_scale.Y}] " +
+            "(with a size of " +
+            $"[{_size.X}m, {_size.Y}m] " +
+            "at a resolution of " +
+            $"[{_resolution}, {_resolution}])"
+        );
+    }
+
 }
