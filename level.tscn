@@ -1,12 +1,11 @@
-[gd_scene load_steps=3 format=3 uid="uid://c8pi87ot22dje"]
+[gd_scene load_steps=5 format=3 uid="uid://c8pi87ot22dje"]
 
 [ext_resource type="Script" path="res://TerrainGenerator.cs" id="1_6ygaj"]
 [ext_resource type="Texture2D" uid="uid://3r5gxwvmmvwu" path="res://heightmap.png" id="2_ppmi8"]
+[ext_resource type="PackedScene" uid="uid://b67i20o6m4vsa" path="res://models/paper_airplane.tscn" id="3_jrg7g"]
+[ext_resource type="Script" path="res://CameraController.cs" id="4_jk5od"]
 
 [node name="Node3D" type="Node3D"]
-
-[node name="Camera3D" type="Camera3D" parent="."]
-fov = 70.0
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.41364, 0, 1.76837)
@@ -14,8 +13,9 @@ script = ExtResource("1_6ygaj")
 Heightmap = ExtResource("2_ppmi8")
 Size = Vector2(2048, 2048)
 Resolution = 512
+ChunkCount = 2
 Amplitude = 200.0
-SimplifyThreshold = 0.0
+SimplifyThreshold = 0.01
 
 [node name="Light" type="DirectionalLight3D" parent="."]
 transform = Transform3D(0.757975, 0.377206, -0.532156, -0.176837, 0.904114, 0.388982, 0.627856, -0.200733, 0.751999, 0, 2, 6)
@@ -23,3 +23,13 @@ shadow_enabled = true
 shadow_normal_bias = 4.789
 shadow_blur = 1.068
 directional_shadow_split_1 = 0.095
+
+[node name="Paper Airplane" parent="." instance=ExtResource("3_jrg7g")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 250, 250)
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 250, 250)
+fov = 81.7
+script = ExtResource("4_jk5od")
+PaperAirplane = NodePath("../Paper Airplane")
+LookAtOffset = Vector3(0, 0.9, 0)

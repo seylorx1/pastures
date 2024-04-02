@@ -10,6 +10,7 @@ public partial class TerrainGenerator : MeshInstance3D
     private Vector2 _size = new(32.0f, 32.0f);
     private int _resolution = 128;
     private int _vertexResolution = 129;
+    private int _chunkResolution = 32;
 
     [Export] Texture2D Heightmap { get; set; }
 
@@ -38,24 +39,50 @@ public partial class TerrainGenerator : MeshInstance3D
         // Make sure resolution is never negative, and is always divisible by 2.
         set
         {
-            _resolution = 0;
-            for (int i = 9; i > 0; i--)
+            // Get a reference to chunk count before meddling with resolution.
+            int chunkCount = ChunkCount;
+
+            // Always enforce a minimum size of 32. (Do while will bitshift this 16 to 32)
+            _resolution = 16;
+
+            // Bitshift clamp between 32 and 8196 (although this value will likely almost always be utterly overkill).
+            do
             {
-                int res = 1 << (4 + i);
-                if (value >= res)
-                {
-                    _resolution = res;
-                    break;
-                }
+                _resolution <<= 1;
             }
-            if (_resolution == 0)
-            {
-                _resolution = 128;
-            }
+            while (_resolution < value && _resolution < 8192);
 
             _vertexResolution = _resolution + 1;
 
             UpdateMeshScale();
+
+            // Update chunk count with new resolution.
+            ChunkCount = chunkCount;
+
+        }
+    }
+
+    [Export]
+    public int ChunkCount
+    {
+        get => _resolution / _chunkResolution;
+
+        set
+        {
+            // Minimum chunk count is two. (Do while will bitshift this 1 to a 2.)
+            int chunkCount = 1;
+
+            // Find the next lowest power of two from the value by bitshifting up.
+            do
+            {
+                chunkCount <<= 1;
+            }
+            while (chunkCount < value && chunkCount < _resolution >> 1);
+
+            // Value is either half of resolution or the next lowest power of two to value.
+
+            // Set the chunk resolution.
+            _chunkResolution = _resolution / chunkCount;
         }
     }
 
@@ -449,106 +476,110 @@ public partial class TerrainGenerator : MeshInstance3D
         {
             for (int quadrantX = 0; quadrantX < searchResolution; quadrantX += halfResolution)
             {
-                // This offsets the search quadrant as a 2x2 of the search resolution.
-                // This can be thought of as the working area.
-
-                // _resolution is referencing the quad count per axis, but we need vertices.
-                // Half resolution is increased by one to allow for searching through quads.
-
-                // The property of this array changes, but it's purpose is to calculate the standard deviation of this quadrant.
-                Vector3[] workingNormals = new Vector3[(halfResolution + 1) * (halfResolution + 1)];
-
-                // Begin calculating standard deviation.
-                Vector3 normalMean = Vector3.Zero;
-
-                // Search through vertices.
-
-                for (int vertexSearchZ = 0; vertexSearchZ < halfResolution + 1; vertexSearchZ++)
+                if (halfResolution <= _chunkResolution)
                 {
-                    for (int vertexSearchX = 0; vertexSearchX < halfResolution + 1; vertexSearchX++)
+                    // This offsets the search quadrant as a 2x2 of the search resolution.
+                    // This can be thought of as the working area.
+
+                    // _resolution is referencing the quad count per axis, but we need vertices.
+                    // Half resolution is increased by one to allow for searching through quads.
+
+                    // The property of this array changes, but it's purpose is to calculate the standard deviation of this quadrant.
+                    Vector3[] workingNormals = new Vector3[(halfResolution + 1) * (halfResolution + 1)];
+
+                    // Begin calculating standard deviation.
+                    Vector3 normalMean = Vector3.Zero;
+
+                    // Search through vertices.
+
+                    for (int vertexSearchZ = 0; vertexSearchZ < halfResolution + 1; vertexSearchZ++)
                     {
-                        // Get the location of this loop in index space.
-                        int vertexX = originX + quadrantX + vertexSearchX;
-                        int vertexZ = originZ + quadrantZ + vertexSearchZ;
-
-                        // Get normal
-                        Vector3 normal = uniformNormals[vertexZ * _vertexResolution + vertexX];
-
-                        // Populate search normals array.
-                        workingNormals[vertexSearchZ * (halfResolution + 1) + vertexSearchX] = normal;
-
-                        // Add to normal mean.
-                        normalMean += normal;
-
-                    }
-                }
-
-                // Calculate mean.
-                normalMean /= workingNormals.Length;
-
-                // Begin calculating the variance.
-                Vector3 variance = Vector3.Zero;
-
-                // Update search normals to subtract the mean and square the result.
-                for (int i = 0; i < workingNormals.Length; i++)
-                    workingNormals[i] = (workingNormals[i] - normalMean) * (workingNormals[i] - normalMean);
-
-                // Get the mean of this new value to set the variance.
-                foreach (Vector3 normal in workingNormals)
-                    variance += normal;
-                variance /= workingNormals.Length;
-
-                // While you can't get the standard deviation of a vector (as this metric has loose definitions when working with space)
-                // We can approximate something akin to it by getting the length of this new vector. (it's close because it involves a square root...)
-                float standardDeviation = variance.Length();
-
-                // This area is pretty flat!
-                // We don't need to search for finer details, just blanket this area as a quad.
-                if (standardDeviation < SimplifyThreshold)
-                {
-                    for (int quadSearchZ = 0; quadSearchZ < halfResolution; quadSearchZ++)
-                    {
-                        for (int quadSearchX = 0; quadSearchX < halfResolution; quadSearchX++)
+                        for (int vertexSearchX = 0; vertexSearchX < halfResolution + 1; vertexSearchX++)
                         {
-                            int quadX = originX + quadrantX + quadSearchX;
-                            int quadZ = originZ + quadrantZ + quadSearchZ;
+                            // Get the location of this loop in index space.
+                            int vertexX = originX + quadrantX + vertexSearchX;
+                            int vertexZ = originZ + quadrantZ + vertexSearchZ;
 
-                            // Assign sides to quad.
+                            // Get normal
+                            Vector3 normal = uniformNormals[vertexZ * _vertexResolution + vertexX];
 
-                            bool internalQuad = true;
+                            // Populate search normals array.
+                            workingNormals[vertexSearchZ * (halfResolution + 1) + vertexSearchX] = normal;
 
-                            if (quadSearchX == 0)
-                            {
-                                terrainQuadCells[quadX, quadZ].SetExternalEdge(TerrainQuadCell.Edge.Left);
-                                internalQuad = false;
-                            }
-                            if (quadSearchX == halfResolution - 1)
-                            {
-                                terrainQuadCells[quadX, quadZ].SetExternalEdge(TerrainQuadCell.Edge.Right);
-                                internalQuad = false;
-                            }
-                            if (quadSearchZ == 0)
-                            {
-                                terrainQuadCells[quadX, quadZ].SetExternalEdge(TerrainQuadCell.Edge.Down);
-                                internalQuad = false;
-                            }
-                            if (quadSearchZ == halfResolution - 1)
-                            {
-                                terrainQuadCells[quadX, quadZ].SetExternalEdge(TerrainQuadCell.Edge.Up);
-                                internalQuad = false;
-                            }
+                            // Add to normal mean.
+                            normalMean += normal;
 
-                            if (internalQuad)
-                                terrainQuadCells[quadX, quadZ].edges = 0b1111;
                         }
                     }
+
+                    // Calculate mean.
+                    normalMean /= workingNormals.Length;
+
+                    // Begin calculating the variance.
+                    Vector3 variance = Vector3.Zero;
+
+                    // Update search normals to subtract the mean and square the result.
+                    for (int i = 0; i < workingNormals.Length; i++)
+                        workingNormals[i] = (workingNormals[i] - normalMean) * (workingNormals[i] - normalMean);
+
+                    // Get the mean of this new value to set the variance.
+                    foreach (Vector3 normal in workingNormals)
+                        variance += normal;
+                    variance /= workingNormals.Length;
+
+                    // While you can't get the standard deviation of a vector (as this metric has loose definitions when working with space)
+                    // We can approximate something akin to it by getting the length of this new vector. (it's close because it involves a square root...)
+                    float standardDeviation = variance.Length();
+
+                    // This area is pretty flat!
+                    // We don't need to search for finer details, just blanket this area as a quad.
+                    if (standardDeviation < SimplifyThreshold)
+                    {
+                        for (int quadSearchZ = 0; quadSearchZ < halfResolution; quadSearchZ++)
+                        {
+                            for (int quadSearchX = 0; quadSearchX < halfResolution; quadSearchX++)
+                            {
+                                int quadX = originX + quadrantX + quadSearchX;
+                                int quadZ = originZ + quadrantZ + quadSearchZ;
+
+                                // Assign sides to quad.
+
+                                bool internalQuad = true;
+
+                                if (quadSearchX == 0)
+                                {
+                                    terrainQuadCells[quadX, quadZ].SetExternalEdge(TerrainQuadCell.Edge.Left);
+                                    internalQuad = false;
+                                }
+                                if (quadSearchX == halfResolution - 1)
+                                {
+                                    terrainQuadCells[quadX, quadZ].SetExternalEdge(TerrainQuadCell.Edge.Right);
+                                    internalQuad = false;
+                                }
+                                if (quadSearchZ == 0)
+                                {
+                                    terrainQuadCells[quadX, quadZ].SetExternalEdge(TerrainQuadCell.Edge.Down);
+                                    internalQuad = false;
+                                }
+                                if (quadSearchZ == halfResolution - 1)
+                                {
+                                    terrainQuadCells[quadX, quadZ].SetExternalEdge(TerrainQuadCell.Edge.Up);
+                                    internalQuad = false;
+                                }
+
+                                if (internalQuad)
+                                    terrainQuadCells[quadX, quadZ].edges = 0b1111;
+                            }
+                        }
+
+                        continue;
+                    }
                 }
+                
                 // Uh oh, it's bumpy!
                 // We need to keep searching to see if we can find any more nuggets of optimisation.
-                else
-                {
-                    BitwiseOptimiseTerrainQuadCells(halfResolution, originX + quadrantX, originZ + quadrantZ, uniformNormals, terrainQuadCells);
-                }
+
+                BitwiseOptimiseTerrainQuadCells(halfResolution, originX + quadrantX, originZ + quadrantZ, uniformNormals, terrainQuadCells);
             }
         }
     }

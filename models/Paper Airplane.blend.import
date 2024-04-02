@@ -1,0 +1,56 @@
+[remap]
+
+importer="scene"
+importer_version=1
+type="PackedScene"
+uid="uid://bhchx5a6wjyx0"
+path="res://.godot/imported/Paper Airplane.blend-fa5506957b4b05ddafeb0e7c971ada0c.scn"
+
+[deps]
+
+source_file="res://models/Paper Airplane.blend"
+dest_files=["res://.godot/imported/Paper Airplane.blend-fa5506957b4b05ddafeb0e7c971ada0c.scn"]
+
+[params]
+
+nodes/root_type=""
+nodes/root_name=""
+nodes/apply_root_scale=true
+nodes/root_scale=1.0
+meshes/ensure_tangents=true
+meshes/generate_lods=false
+meshes/create_shadow_meshes=true
+meshes/light_baking=3
+meshes/lightmap_texel_size=0.2
+meshes/force_disable_compression=false
+skins/use_named_skins=false
+animation/import=false
+animation/fps=60.0
+animation/trimming=false
+animation/remove_immutable_tracks=false
+import_script/path=""
+_subresources={
+"nodes": {
+"PATH:AnimationPlayer": {
+"optimizer/enabled": false
+}
+}
+}
+gltf/naming_version=1
+gltf/embedded_image_handling=0
+blender/nodes/visible=0
+blender/nodes/punctual_lights=false
+blender/nodes/cameras=false
+blender/nodes/custom_properties=false
+blender/nodes/modifiers=1
+blender/meshes/colors=false
+blender/meshes/uvs=true
+blender/meshes/normals=true
+blender/meshes/tangents=true
+blender/meshes/skins=2
+blender/meshes/export_bones_deforming_mesh_only=false
+blender/materials/unpack_enabled=true
+blender/materials/export_materials=1
+blender/animation/limit_playback=false
+blender/animation/always_sample=false
+blender/animation/group_tracks=false
