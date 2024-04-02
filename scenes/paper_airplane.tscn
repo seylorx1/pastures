@@ -1,8 +1,8 @@
 [gd_scene load_steps=14 format=3 uid="uid://b67i20o6m4vsa"]
 
-[ext_resource type="Script" path="res://PaperAeroplaneController.cs" id="1_wcig2"]
-[ext_resource type="Texture2D" uid="uid://7gxgnc0ejgeg" path="res://Paper_A.png" id="2_t8rjn"]
-[ext_resource type="Texture2D" uid="uid://ctjc16jhmscmj" path="res://Paper_SSS.png" id="3_p6ayx"]
+[ext_resource type="Script" path="res://scripts/PaperAeroplaneController.cs" id="1_wcig2"]
+[ext_resource type="Texture2D" uid="uid://7gxgnc0ejgeg" path="res://textures/Paper_A.png" id="2_t8rjn"]
+[ext_resource type="Texture2D" uid="uid://ctjc16jhmscmj" path="res://textures/Paper_SSS.png" id="3_p6ayx"]
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial3D_dkf8k"]
 cull_mode = 2
