@@ -1,0 +1,15 @@
+[gd_resource type="StandardMaterial3D" load_steps=3 format=3 uid="uid://fvbogibw6tu1"]
+
+[ext_resource type="Texture2D" uid="uid://7gxgnc0ejgeg" path="res://textures/Paper_A.png" id="1_a5he4"]
+[ext_resource type="Texture2D" uid="uid://ctjc16jhmscmj" path="res://textures/Paper_SSS.png" id="2_shnnh"]
+
+[resource]
+cull_mode = 2
+albedo_texture = ExtResource("1_a5he4")
+subsurf_scatter_enabled = true
+subsurf_scatter_strength = 1.0
+subsurf_scatter_texture = ExtResource("2_shnnh")
+subsurf_scatter_transmittance_enabled = true
+subsurf_scatter_transmittance_texture = ExtResource("2_shnnh")
+subsurf_scatter_transmittance_depth = 6.0
+subsurf_scatter_transmittance_boost = 0.29
