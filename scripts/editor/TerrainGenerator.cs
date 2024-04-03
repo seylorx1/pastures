@@ -4,7 +4,7 @@ using System.Collections.Generic;
 namespace Pastures;
 
 [Tool]
-public partial class TerrainGenerator : MeshInstance3D
+public partial class TerrainGenerator : Node3D
 {
     private Vector2 _size = new(32.0f, 32.0f);
     private int _resolution = 128;
@@ -70,7 +70,6 @@ public partial class TerrainGenerator : MeshInstance3D
 
     [Export] public float Amplitude { get; set; } = 16.0f;
     [Export] public float SimplifyThreshold { get; set; } = 0.005f;
-    [Export] public bool ShowChunksInHierarchy {get; set; } = false;
 
     // Buttons
     [Export]
@@ -84,46 +83,20 @@ public partial class TerrainGenerator : MeshInstance3D
         }
     }
 
+    [Export]
+    public bool DeleteChunks
+    {
+        get => false;
+        set
+        {
+            if (value)
+                ClearData();
+        }
+    }
+
+
     public void OnGenerateMesh()
     {
-        // Remove any pre-existing child nodes.
-        while(GetChildCount(true) > 0)
-        {
-            GetChild(0, true).Free();
-        }
-
-        // Create chunk nodes.
-        int chunkCount = ChunkCount; // Cache result.
-        Vector2 chunkSize = _size / chunkCount;
-        for(int z = 0; z < chunkCount; z++)
-        {
-            for(int x = 0; x < chunkCount; x++)
-            {
-                // Calculate chunk centre.
-                Vector3 chunkPos =
-                    new
-                    (
-                        x: (x - chunkCount / 2) * chunkSize.X + chunkSize.X / 2,
-                        y: 0,
-                        z: (z - chunkCount / 2) * chunkSize.Y + chunkSize.Y / 2
-                    );
-
-                // Create node at position
-                MeshInstance3D meshInstance = new()
-                {
-                    Name = $"Chunk ({x}, {z})",
-                    Position = chunkPos
-                };
-
-                // Add to scene tree.
-                AddChild(meshInstance, false, ShowChunksInHierarchy ? InternalMode.Disabled : InternalMode.Back);
-
-                if(ShowChunksInHierarchy)
-                    meshInstance.Owner = GetTree().EditedSceneRoot;
-
-                // Create thread to split mesh to new array mesh.
-            }
-        }
 
         Image heightmapImage = null;
 
@@ -131,22 +104,72 @@ public partial class TerrainGenerator : MeshInstance3D
         if (Heightmap != null)
             heightmapImage = Heightmap.GetImage();
 
-        // Init arrays.
-        Godot.Collections.Array surfaceArray = new();
-        surfaceArray.Resize((int)Mesh.ArrayType.Max);
-
         TerrainMeshData data = new(heightmapImage, _resolution, _chunkCount, _size, Amplitude, SimplifyThreshold);
 
-        // Apply lists to arrays.
-        surfaceArray[(int)Mesh.ArrayType.Vertex] = data.Vertices.ToArray();
-        surfaceArray[(int)Mesh.ArrayType.TexUV] = data.UVs.ToArray();
-        surfaceArray[(int)Mesh.ArrayType.Normal] = data.Normals;
-        surfaceArray[(int)Mesh.ArrayType.Index] = data.Indices.ToArray();
+        // Delete child nodes.
+        ClearData();
 
-        // Set the mesh.
-        ArrayMesh arrMesh = new();
-        arrMesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, surfaceArray);
-        Mesh = arrMesh;
+        // Create chunk nodes.
+        int chunkCount = ChunkCount; // Cache result.
+        Vector2 chunkSize = _size / chunkCount;
+        for (int chunkZ = 0; chunkZ < chunkCount; chunkZ++)
+        {
+            for (int chunkX = 0; chunkX < chunkCount; chunkX++)
+            {
+                // Calculate chunk centre.
+                Vector3 chunkPosition =
+                    new
+                    (
+                        x: (chunkX - chunkCount / 2) * chunkSize.X + chunkSize.X / 2,
+                        y: 0,
+                        z: (chunkZ - chunkCount / 2) * chunkSize.Y + chunkSize.Y / 2
+                    );
+
+                // Create node at position
+                MeshInstance3D meshInstance = new()
+                {
+                    Name = $"Chunk ({chunkX}, {chunkZ})",
+                    Position = chunkPosition,
+                    Layers = 0b10
+                };
+
+                // Add to scene tree.
+                AddChild(meshInstance);
+                meshInstance.Owner = GetTree().EditedSceneRoot;
+
+                // Create thread to split mesh to new array mesh.
+                // Init arrays.
+                Godot.Collections.Array surfaceArray = new();
+                surfaceArray.Resize((int)Mesh.ArrayType.Max);
+
+                // Split mesh.
+                data.SplitMeshAtChunk(chunkX, chunkZ, chunkPosition, out List<Vector3> chunkVertices, out List<Vector2> chunkUVs, out List<Vector3> chunkNormals, out List<int> chunkIndices);
+
+                // Apply lists to arrays.
+                Vector3[] chunkVertexArray = chunkVertices.ToArray();
+                surfaceArray[(int)Mesh.ArrayType.Vertex] = chunkVertexArray;
+                surfaceArray[(int)Mesh.ArrayType.TexUV] = chunkUVs.ToArray();
+                surfaceArray[(int)Mesh.ArrayType.Normal] = chunkNormals.ToArray();
+                surfaceArray[(int)Mesh.ArrayType.Index] = chunkIndices.ToArray();
+
+                // Set the mesh.
+                ArrayMesh arrMesh = new();
+                arrMesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, surfaceArray);
+                meshInstance.Mesh = arrMesh;
+
+                // Create physics mesh.
+                meshInstance.CreateTrimeshCollision();
+            }
+        }
+    }
+
+    public void ClearData()
+    {
+        // Remove any pre-existing child nodes.
+        while (GetChildCount(true) > 0)
+        {
+            GetChild(0, true).Free();
+        }
     }
 
 }

@@ -1,4 +1,5 @@
 using Godot;
+using System;
 using System.Collections.Generic;
 
 namespace Pastures;
@@ -6,13 +7,18 @@ namespace Pastures;
 public class TerrainMeshData
 {
     // Mesh data structure.
-    public List<Vector3> Vertices {get; private set;}
-    public List<Vector2> UVs {get; private set;}
-    public Vector3[] Normals {get; private set;}
-    public List<int> Indices {get; private set;}
+    public List<Vector3> Vertices { get; private set; }
+    public List<Vector2> UVs { get; private set; }
+    public Vector3[] Normals { get; private set; }
+    public List<int> Indices { get; private set; }
+
+    // An array of index positions of the Indices list, corresponding to chunk index.
+    // i.e. int[chunkx * chunksize + chunkz] returns an int list of positions in the indices list.
+    private List<int>[] _chunkQuadIndicesLookup;
 
     private int _resolution;
     private int _vertexResolution;
+    private int _chunkCount;
     private int _chunkResolution;
 
     private Vector2 _scale;
@@ -22,18 +28,28 @@ public class TerrainMeshData
 
     public TerrainMeshData(Image heightmapImage, int resolution, int chunkCount, Vector2 size, float amplitude, float simplifyThreshold)
     {
-        // Set privates.
+        /* SET PRIVATES*/
+
+        _chunkCount = chunkCount;
+        _amplitude = amplitude;
+        _simplifyThreshold = simplifyThreshold;
+
+        // Initialise the chunk look-up table.
+        _chunkQuadIndicesLookup = new List<int>[chunkCount * chunkCount];
+        for (int i = 0; i < chunkCount * chunkCount; i++)
+            _chunkQuadIndicesLookup[i] = new();
+
+        // Initialise resolutions
         _resolution = resolution;
-        _vertexResolution = resolution + 1;
-        _chunkResolution = resolution / chunkCount;
+        _vertexResolution = _resolution + 1;
+        _chunkResolution = _resolution / _chunkCount;
+
+        // Set scale based on size and resolution.
         _scale = new
         (
             size.X / _resolution,
             size.Y / _resolution
         );
-        _amplitude = amplitude;
-        _simplifyThreshold = simplifyThreshold;
-
 
         // Initialise uniform mesh arrays.
         List<Vector3> uniformVerts = new();
@@ -51,6 +67,77 @@ public class TerrainMeshData
         Normals = GenerateSmoothNormals(Vertices, Indices);
         BitwiseCorrectGapsFromTerrainQuadCells(_resolution, terrainQuadCells);
 
+    }
+
+    /// <summary>
+    /// Splits the mesh to the bounds of the chunk at index (X, Z).
+    /// </summary>
+    public void SplitMeshAtChunk(int chunkX, int chunkZ, Vector3 chunkPosition, out List<Vector3> chunkVertices, out List<Vector2> chunkUVs, out List<Vector3> chunkNormals, out List<int> chunkIndices)
+    {
+        // Initialise outs.
+        // TODO: This could be a struct.
+        chunkVertices = new();
+        chunkUVs = new();
+        chunkNormals = new();
+        chunkIndices = new();
+
+        // Don't consider if chunk is out of bounds.
+        if (chunkX < 0 || chunkX >= _chunkCount || chunkZ < 0 || chunkZ >= _chunkCount)
+        {
+            throw new IndexOutOfRangeException($"Chunk at ({chunkX}, {chunkZ}) is out of bounds!");
+        }
+
+        Dictionary<int, int> chunkMeshVertIndexByMeshVertIndex = new();
+
+        // Look through every quad in this chunk.
+        foreach (int quadIndex in _chunkQuadIndicesLookup[chunkZ * _chunkCount + chunkX])
+        {
+            // Get four corners of quad from original mesh.
+            int[] quadVertIndices = new int[4];
+            quadVertIndices[(int)TerrainQuadCell.Corner.TopLeft] = Indices[quadIndex + 0];
+            quadVertIndices[(int)TerrainQuadCell.Corner.TopRight] = Indices[quadIndex + 5];
+            quadVertIndices[(int)TerrainQuadCell.Corner.BottomLeft] = Indices[quadIndex + 1];
+            quadVertIndices[(int)TerrainQuadCell.Corner.BottomRight] = Indices[quadIndex + 2];
+
+            // Array to store reference to new quad corners.
+            int[] chunkQuadVertIndices = new int[4];
+
+            // Look through each corner
+            for (int i = 0; i < 4; i++)
+            {
+                // Does the dictionary have a key for the original index?
+                if (chunkMeshVertIndexByMeshVertIndex.ContainsKey(quadVertIndices[i]))
+                {
+                    // Get reference to build indices.
+                    chunkQuadVertIndices[i] = chunkMeshVertIndexByMeshVertIndex[quadVertIndices[i]];
+                    continue;
+                }
+
+                // We haven't discovered this vertex yet. 
+
+                // Add the key and update quad list.
+                chunkMeshVertIndexByMeshVertIndex.Add(quadVertIndices[i], chunkVertices.Count);
+                chunkQuadVertIndices[i] = chunkVertices.Count;
+
+
+                // Copy the vertex info to chunk lists.
+                chunkVertices.Add(Vertices[quadVertIndices[i]] - chunkPosition); // Correct vertex position too!
+                chunkUVs.Add(UVs[quadVertIndices[i]]);
+                chunkNormals.Add(Normals[quadVertIndices[i]]);
+
+            }
+
+            // Rebuild quad indices.
+
+            // Triangle 1.
+            chunkIndices.Add(chunkQuadVertIndices[(int)TerrainQuadCell.Corner.TopLeft]);
+            chunkIndices.Add(chunkQuadVertIndices[(int)TerrainQuadCell.Corner.BottomLeft]);
+            chunkIndices.Add(chunkQuadVertIndices[(int)TerrainQuadCell.Corner.BottomRight]);
+
+            chunkIndices.Add(chunkQuadVertIndices[(int)TerrainQuadCell.Corner.TopLeft]);
+            chunkIndices.Add(chunkQuadVertIndices[(int)TerrainQuadCell.Corner.BottomRight]);
+            chunkIndices.Add(chunkQuadVertIndices[(int)TerrainQuadCell.Corner.TopRight]);
+        }
     }
 
     private void GenerateUniformMesh(Image heightmapImage, List<Vector3> uniformVerts, List<Vector2> uniformUVs, List<int> uniformIndices, out TerrainQuadCell[,] terrainQuads)
@@ -353,6 +440,12 @@ public class TerrainMeshData
                 if (!terrainQuadCells[x, z].IsCornerVertex(TerrainQuadCell.Corner.BottomLeft))
                     continue;
 
+                // Figure out which chunk this quad lies in.
+                int chunkX = (x - x % _chunkResolution) / _chunkResolution;
+                int chunkZ = (z - z % _chunkResolution) / _chunkResolution;
+                int chunkIndex = chunkZ * _chunkCount + chunkX;
+
+                // Define an array representing the indices of the four vertices making up the quad.
                 int[] quadCorners = new int[4];
 
                 // It's important to note here that these quads always have a 1:1 ratio.
@@ -379,6 +472,9 @@ public class TerrainMeshData
                 quadCorners[(int)TerrainQuadCell.Corner.TopRight] = terrainQuadCells[x + length, z + length].cornerIndex[(int)TerrainQuadCell.Corner.TopRight];
 
                 // With these indices at our disposal, build triangles.
+
+                // Store the list-position of quad indices in the chunkIndicesLookup table.
+                _chunkQuadIndicesLookup[chunkIndex].Add(Indices.Count);
 
                 // Triangle 1.
                 Indices.Add(quadCorners[(int)TerrainQuadCell.Corner.TopLeft]);
