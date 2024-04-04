@@ -1,0 +1,27 @@
+[gd_resource type="ShaderMaterial" load_steps=10 format=3 uid="uid://d0xq3k08u4io5"]
+
+[ext_resource type="Shader" path="res://shaders/terrain.gdshader" id="1_73tnv"]
+[ext_resource type="Texture2D" uid="uid://vur7433jw7on" path="res://textures/normalmap.png" id="2_1rcuw"]
+[ext_resource type="Texture2D" uid="uid://si8l3qaoj7yg" path="res://textures/placeholder/bumpy_ground/bumpy_worn_ground_albedo.png" id="2_rfet3"]
+[ext_resource type="Texture2D" uid="uid://crnnkxxswv4pk" path="res://textures/placeholder/bumpy_ground/bumpy_worn_ground_ao.png" id="3_6kx6c"]
+[ext_resource type="Texture2D" uid="uid://detetg6gfdcbu" path="res://textures/placeholder/bumpy_ground/bumpy_worn_ground_normal-ogl.png" id="4_agjkn"]
+[ext_resource type="Texture2D" uid="uid://0gye1msbvrdw" path="res://textures/placeholder/wispy_meadows/wispy-grass-meadow_albedo.png" id="5_7k1fi"]
+[ext_resource type="Texture2D" uid="uid://bmes3en6xb3nm" path="res://textures/placeholder/wispy_meadows/wispy-grass-meadow_ao.png" id="6_pd73w"]
+[ext_resource type="Texture2D" uid="uid://m75ymlu4po5k" path="res://textures/placeholder/wispy_meadows/wispy-grass-meadow_normal-ogl.png" id="7_177v4"]
+[ext_resource type="Texture2D" uid="uid://3r5gxwvmmvwu" path="res://textures/heightmap.png" id="8_c1in8"]
+
+[resource]
+render_priority = 0
+shader = ExtResource("1_73tnv")
+shader_parameter/sinkDistance = 300.0
+shader_parameter/grass_scale = 100.0
+shader_parameter/cliff_scale = 20.0
+shader_parameter/cliff_strength = 50.0
+shader_parameter/height_map = ExtResource("8_c1in8")
+shader_parameter/normal_map = ExtResource("2_1rcuw")
+shader_parameter/grass_albedo = ExtResource("5_7k1fi")
+shader_parameter/grass_normal = ExtResource("7_177v4")
+shader_parameter/grass_ao = ExtResource("6_pd73w")
+shader_parameter/cliff_albedo = ExtResource("2_rfet3")
+shader_parameter/cliff_normal = ExtResource("4_agjkn")
+shader_parameter/cliff_ao = ExtResource("3_6kx6c")
