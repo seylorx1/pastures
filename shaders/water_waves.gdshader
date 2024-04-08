@@ -3,10 +3,20 @@
 
 shader_type spatial;
 
+#include "noise.gdshaderinc"
+#include "fresnel.gdshaderinc"
+#include "proximity_fade.gdshaderinc"
+
 uniform sampler2D screen_texture : hint_screen_texture, repeat_disable, filter_nearest;
 uniform sampler2D depth_texture : source_color, hint_depth_texture;
 
 uniform vec4 base_color : source_color = vec4(0.3, 0.5, 1.0, 0.5);
+
+uniform float shimmer_start_height = 20.0;
+uniform float shimmer_end_height = 30.0;
+uniform float shimmer_scale = 300.0;
+uniform float shimmer_crest_influence : hint_range(0.0, 1.0) = 0.75;
+
 uniform vec3 fog_color : source_color = vec3(0.3, 0.5, 1.0);
 uniform float fog_density = 0.15;
 
@@ -66,19 +76,14 @@ vec3 gerstnerWave
 	);
 }
 
-vec3 colorBelowWater(vec2 screen_uv, float fragment_depth, mat4 inv_projection_matrix)
+vec3 colorBelowWater(float linear_depth, float fragment_depth, vec2 screen_uv, vec3 normal, vec3 view, mat4 inv_projection_matrix)
 {
-	float depth = texture(depth_texture, screen_uv).x;
-	vec3 ndc = vec3(screen_uv * 2.0 - 1.0, depth);
-	vec4 view = inv_projection_matrix * vec4(ndc, 1.0);
-	view.xyz /= view.w;
-	float linear_depth = -view.z;
 	float depth_difference = linear_depth - fragment_depth;
 	depth_difference *= 0.05;
 	
 	vec3 background_color = texture(screen_texture, screen_uv).rgb;
 	float fog_factor = exp2(-fog_density * depth_difference);
-	return mix(fog_color, background_color, fog_factor);
+	return mix(fog_color, background_color, fog_factor * (1.0 - fresnel(10.0, normal, view)));
 }
 
 void vertex() {
@@ -99,10 +104,37 @@ void vertex() {
 }
 
 void fragment() {
-	// Called for every pixel the material is visible on.
-	ALBEDO = base_color.rgb;
-	EMISSION = colorBelowWater(SCREEN_UV, FRAGCOORD.z, INV_PROJECTION_MATRIX) * (1.0 - base_color.a);
+	// Get linear depth from depth texture
+	float depth = texture(depth_texture, SCREEN_UV).x;
+	vec3 ndc = vec3(SCREEN_UV * 2.0 - 1.0, depth);
+	vec4 depth_view = INV_PROJECTION_MATRIX * vec4(ndc, 1.0);
+	depth_view.xyz /= depth_view.w;
+	float linear_depth = -depth_view.z;
+	
+	float proximity = 1.0 - proximity_fade(5.0, -linear_depth, VERTEX, INV_PROJECTION_MATRIX);
+	float close_proximity = pow(proximity, 16.0);
+	float foam = abs(sin((proximity + TIME * 0.5) * 3.0)) * proximity + close_proximity;
+	
+	ALBEDO = mix(base_color.rgb, vec3(1.0, 1.0, 1.0), clamp(foam * 0.2, 0.0, 1.0));
+	ALPHA = proximity_fade(1.0, -linear_depth, VERTEX, INV_PROJECTION_MATRIX);
+	
+	EMISSION = colorBelowWater(linear_depth, FRAGCOORD.z, SCREEN_UV, NORMAL, VIEW, INV_PROJECTION_MATRIX) * (1.0 - base_color.a);
+	
 	
 	METALLIC = 0.9;
-	ROUGHNESS = 0.01;
+	
+	float crest = (INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).y;
+	crest = smoothstep(shimmer_start_height, shimmer_end_height, crest);
+	
+	vec2 uv_stretch = vec2
+	(
+		UV.x * 3.0,
+		UV.y
+	);
+	float fbm = snoise(uv_stretch * shimmer_scale + TIME * 0.3) * snoise(uv_stretch * -shimmer_scale * 2.0 + TIME * 0.4);
+	float shimmer = smoothstep(0.2, 0.8, fbm) * fresnel(1.0, NORMAL, VIEW) * max(1.0 - shimmer_crest_influence, crest);
+	
+	ROUGHNESS = shimmer;
+	SPECULAR = shimmer * 5.0;
+	RIM = 20.0;
 }

@@ -48,9 +48,13 @@ adjustment_saturation = 8.0
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_0jdjv"]
 render_priority = 0
 shader = ExtResource("4_cyw3i")
-shader_parameter/base_color = Color(0.116, 0.253267, 0.4, 0.737255)
-shader_parameter/fog_color = Color(0.153, 0.23385, 0.3, 1)
-shader_parameter/fog_density = 0.48
+shader_parameter/base_color = Color(0.116, 0.182267, 0.4, 0.258824)
+shader_parameter/shimmer_start_height = 25.0
+shader_parameter/shimmer_end_height = 35.0
+shader_parameter/shimmer_scale = 200.0
+shader_parameter/shimmer_crest_influence = 0.705
+shader_parameter/fog_color = Color(0.1368, 0.15276, 0.19, 1)
+shader_parameter/fog_density = 1.06
 shader_parameter/wave1_direction = Vector2(0.5, 0.1)
 shader_parameter/wave1_steepness = 0.04
 shader_parameter/wave1_wavelength = 1000.0
@@ -61,8 +65,8 @@ shader_parameter/wave3_direction = Vector2(-0.2, 0.1)
 shader_parameter/wave3_steepness = 0.068
 shader_parameter/wave3_wavelength = 250.0
 shader_parameter/wave4_direction = Vector2(0.5, -1)
-shader_parameter/wave4_steepness = 0.032
-shader_parameter/wave4_wavelength = 200.0
+shader_parameter/wave4_steepness = 0.087
+shader_parameter/wave4_wavelength = 600.0
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_itsop"]
 material = SubResource("ShaderMaterial_0jdjv")
@@ -101,7 +105,6 @@ environment = SubResource("Environment_imcw1")
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 22.3599, 0)
-cast_shadow = 0
 gi_mode = 2
 gi_lightmap_scale = 3
 mesh = SubResource("PlaneMesh_itsop")
