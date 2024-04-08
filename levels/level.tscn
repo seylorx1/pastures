@@ -10,7 +10,7 @@ sky_top_color = Color(0.4189, 0.574153, 0.71, 1)
 sky_horizon_color = Color(0.56278, 0.672873, 0.747517, 1)
 ground_bottom_color = Color(0.1848, 0.194, 0.24, 1)
 ground_horizon_color = Color(0.56278, 0.672873, 0.747517, 1)
-ground_curve = 0.0229739
+ground_curve = 0.125533
 sun_curve = 0.0832181
 
 [sub_resource type="Sky" id="Sky_qpdji"]
@@ -19,16 +19,28 @@ sky_material = SubResource("ProceduralSkyMaterial_obtw0")
 [sub_resource type="Environment" id="Environment_imcw1"]
 background_mode = 2
 sky = SubResource("Sky_qpdji")
-ambient_light_sky_contribution = 0.17
+ambient_light_sky_contribution = 0.11
 ssao_radius = 1.4
 ssao_intensity = 5.69
 ssao_power = 0.430762
 ssao_detail = 0.68
 ssao_horizon = 0.13
-fog_light_energy = 1.06
-fog_sun_scatter = 0.14
-fog_density = 0.0313
-fog_height = -65.36
+sdfgi_use_occlusion = true
+sdfgi_bounce_feedback = 0.48
+sdfgi_cascades = 8
+sdfgi_min_cell_size = 23.0375
+sdfgi_cascade0_distance = 1474.4
+sdfgi_max_distance = 377446.0
+sdfgi_y_scale = 0
+sdfgi_energy = 0.95
+fog_light_energy = 2.7
+fog_sun_scatter = 0.2
+fog_density = 0.0001
+fog_sky_affect = 0.0
+volumetric_fog_density = 0.0217
+volumetric_fog_anisotropy = 0.37
+volumetric_fog_length = 27.69
+volumetric_fog_detail_spread = 3.69343
 adjustment_brightness = 8.0
 adjustment_contrast = 6.21
 adjustment_saturation = 8.0
@@ -36,27 +48,33 @@ adjustment_saturation = 8.0
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_0jdjv"]
 render_priority = 0
 shader = ExtResource("4_cyw3i")
-shader_parameter/base_color = Color(0.3, 0.5, 1, 1)
-shader_parameter/wave1_direction = Vector2(1, 0)
-shader_parameter/wave1_steepness = 0.284
-shader_parameter/wave1_wavelength = 10.0
-shader_parameter/wave2_direction = Vector2(1.145, 0.5)
-shader_parameter/wave2_steepness = 0.171
-shader_parameter/wave2_wavelength = 6.0
-shader_parameter/wave3_direction = Vector2(1, 0.285)
-shader_parameter/wave3_steepness = 0.317
-shader_parameter/wave3_wavelength = 30.53
+shader_parameter/base_color = Color(0.116, 0.253267, 0.4, 0.737255)
+shader_parameter/fog_color = Color(0.153, 0.23385, 0.3, 1)
+shader_parameter/fog_density = 0.48
+shader_parameter/wave1_direction = Vector2(0.5, 0.1)
+shader_parameter/wave1_steepness = 0.04
+shader_parameter/wave1_wavelength = 1000.0
+shader_parameter/wave2_direction = Vector2(-0.5, 0.1)
+shader_parameter/wave2_steepness = 0.02
+shader_parameter/wave2_wavelength = 500.0
+shader_parameter/wave3_direction = Vector2(-0.2, 0.1)
+shader_parameter/wave3_steepness = 0.068
+shader_parameter/wave3_wavelength = 250.0
+shader_parameter/wave4_direction = Vector2(0.5, -1)
+shader_parameter/wave4_steepness = 0.032
+shader_parameter/wave4_wavelength = 200.0
 
 [sub_resource type="PlaneMesh" id="PlaneMesh_itsop"]
 material = SubResource("ShaderMaterial_0jdjv")
-size = Vector2(100, 100)
-subdivide_width = 100
-subdivide_depth = 100
+size = Vector2(8192, 8192)
+subdivide_width = 200
+subdivide_depth = 200
 
 [node name="Level" type="Node3D"]
 
 [node name="Light" type="DirectionalLight3D" parent="."]
 transform = Transform3D(0.0846512, 0.445532, -0.891255, -0.180474, 0.886527, 0.426027, 0.97993, 0.124785, 0.155453, 0, 2, 6)
+light_color = Color(1, 0.973, 0.91, 1)
 shadow_enabled = true
 directional_shadow_split_1 = 0.058
 directional_shadow_split_2 = 0.269
@@ -82,6 +100,8 @@ environment = SubResource("Environment_imcw1")
 [node name="Terrain Generator" parent="." instance=ExtResource("3_c2k17")]
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="."]
-transform = Transform3D(0.999028, 0.0440727, 0, -0.0440727, 0.999028, 0, 0, 0, 1, 0, 138, 0)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 22.3599, 0)
+cast_shadow = 0
 gi_mode = 2
+gi_lightmap_scale = 3
 mesh = SubResource("PlaneMesh_itsop")
