@@ -1,19 +1,20 @@
-[gd_scene load_steps=7 format=3 uid="uid://c8pi87ot22dje"]
+[gd_scene load_steps=10 format=3 uid="uid://c8pi87ot22dje"]
 
 [ext_resource type="PackedScene" uid="uid://efusktdakdps" path="res://scenes/terrain_generator.res" id="3_c2k17"]
 [ext_resource type="PackedScene" uid="uid://b67i20o6m4vsa" path="res://scenes/paper_airplane.tscn" id="3_jrg7g"]
+[ext_resource type="Shader" path="res://shaders/water_waves.gdshader" id="4_cyw3i"]
 [ext_resource type="Script" path="res://scripts/CameraController.cs" id="4_jk5od"]
 
-[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_gw87f"]
-sky_top_color = Color(0.468328, 0.425705, 0.532867, 1)
-sky_horizon_color = Color(0.804833, 0.607208, 0.473959, 1)
-ground_bottom_color = Color(0.3848, 0.450147, 0.52, 1)
-ground_horizon_color = Color(0.803922, 0.607843, 0.47451, 1)
-sun_angle_max = 0.0
-sun_curve = 0.0609193
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_obtw0"]
+sky_top_color = Color(0.4189, 0.574153, 0.71, 1)
+sky_horizon_color = Color(0.56278, 0.672873, 0.747517, 1)
+ground_bottom_color = Color(0.1848, 0.194, 0.24, 1)
+ground_horizon_color = Color(0.56278, 0.672873, 0.747517, 1)
+ground_curve = 0.0229739
+sun_curve = 0.0832181
 
 [sub_resource type="Sky" id="Sky_qpdji"]
-sky_material = SubResource("ProceduralSkyMaterial_gw87f")
+sky_material = SubResource("ProceduralSkyMaterial_obtw0")
 
 [sub_resource type="Environment" id="Environment_imcw1"]
 background_mode = 2
@@ -32,18 +33,38 @@ adjustment_brightness = 8.0
 adjustment_contrast = 6.21
 adjustment_saturation = 8.0
 
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_0jdjv"]
+render_priority = 0
+shader = ExtResource("4_cyw3i")
+shader_parameter/base_color = Color(0.3, 0.5, 1, 1)
+shader_parameter/wave1_direction = Vector2(1, 0)
+shader_parameter/wave1_steepness = 0.284
+shader_parameter/wave1_wavelength = 10.0
+shader_parameter/wave2_direction = Vector2(1.145, 0.5)
+shader_parameter/wave2_steepness = 0.171
+shader_parameter/wave2_wavelength = 6.0
+shader_parameter/wave3_direction = Vector2(1, 0.285)
+shader_parameter/wave3_steepness = 0.317
+shader_parameter/wave3_wavelength = 30.53
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_itsop"]
+material = SubResource("ShaderMaterial_0jdjv")
+size = Vector2(100, 100)
+subdivide_width = 100
+subdivide_depth = 100
+
 [node name="Level" type="Node3D"]
 
 [node name="Light" type="DirectionalLight3D" parent="."]
-transform = Transform3D(0.757975, 0.377206, -0.532156, -0.176837, 0.904114, 0.388982, 0.627856, -0.200733, 0.751999, 0, 2, 6)
+transform = Transform3D(0.0846512, 0.445532, -0.891255, -0.180474, 0.886527, 0.426027, 0.97993, 0.124785, 0.155453, 0, 2, 6)
 shadow_enabled = true
-shadow_blur = 0.299
-directional_shadow_split_1 = 0.128
+directional_shadow_split_1 = 0.058
 directional_shadow_split_2 = 0.269
 directional_shadow_split_3 = 0.608
 directional_shadow_blend_splits = true
-directional_shadow_fade_start = 0.107
+directional_shadow_fade_start = 0.177
 directional_shadow_max_distance = 1024.0
+directional_shadow_pancake_size = 16.5
 
 [node name="Paper Airplane" parent="." instance=ExtResource("3_jrg7g")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 250, 250)
@@ -59,3 +80,8 @@ LookAtOffset = Vector3(0, 0.9, 0)
 environment = SubResource("Environment_imcw1")
 
 [node name="Terrain Generator" parent="." instance=ExtResource("3_c2k17")]
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+transform = Transform3D(0.999028, 0.0440727, 0, -0.0440727, 0.999028, 0, 0, 0, 1, 0, 138, 0)
+gi_mode = 2
+mesh = SubResource("PlaneMesh_itsop")

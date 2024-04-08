@@ -1,5 +1,6 @@
 using Godot;
 using System;
+using System.IO;
 
 namespace Pastures.Game;
 
@@ -11,7 +12,10 @@ public partial class PaperAeroplaneController : RigidBody3D
     private Transform3D _interpPrevious, _interpCurrent;
     private bool _interpUpdate = false;
 
-	Vector3 _rawEuler = Vector3.Zero;
+	private Vector3 _rawEuler = Vector3.Zero;
+
+    private float _rawVertical = 0f;
+    private float _vertical = 0f;
 
 
     public override void _Ready()
@@ -40,9 +44,20 @@ public partial class PaperAeroplaneController : RigidBody3D
     {
         Vector3 velocity = _interpCurrent.Origin - _interpPrevious.Origin;
 
-        if (Input.IsActionJustPressed("plane_up") && velocity.Y <= 0f)
+        if (Input.IsActionPressed("plane_up"))
         {
-            ApplyCentralImpulse(Vector3.Up * 0.2f);
+            _rawVertical = 1f;
+            _rawEuler.X = Mathf.Pi * 0.4f;
+        }
+        else if(Input.IsActionPressed("plane_down"))
+        {
+            _rawVertical = -2f;
+            _rawEuler.X = -Mathf.Pi * 0.4f;
+        }
+        else
+        {
+            _rawVertical = -0.5f;
+            _rawEuler.X = 0f;
         }
 
 		if (Input.IsActionPressed("plane_left"))
@@ -61,20 +76,6 @@ public partial class PaperAeroplaneController : RigidBody3D
 			_rawEuler.Z -= Mathf.Pi * 0.3f;
 		}
 
-		// Simple deadzone.
-		if(Mathf.Abs(velocity.Y) < 0.1f)
-			_rawEuler.X = 0f;
-		else if(velocity.Y > 0f)
-			_rawEuler.X = velocity.Y - 0.1f;
-		else
-			_rawEuler.X = velocity.Y + 0.1f;
-
-		// Clamps extent angles to 0.2.
-		_rawEuler.X = Mathf.Clamp(_rawEuler.X, -0.15f, 0.15f) / 0.15f;
-
-		// Convert to angles...
-		_rawEuler.X *= Mathf.Pi * 0.45f;
-
 		Rotation = new
 		(
 			Mathf.LerpAngle(Rotation.X, _rawEuler.X, (float)delta),
@@ -82,12 +83,19 @@ public partial class PaperAeroplaneController : RigidBody3D
 			Mathf.LerpAngle(Rotation.Z, _rawEuler.Z, (float)delta)
 		);
 
+        _vertical = Mathf.Lerp(_vertical, _rawVertical, (float)delta);
+
         _interpUpdate = true;
     }
 
     public override void _IntegrateForces(PhysicsDirectBodyState3D state)
     {
-		LinearVelocity = new Vector3(Mathf.Sin(Rotation.Y) * -10.0f, LinearVelocity.Y, Mathf.Cos(Rotation.Y) * -10.0f);
+		LinearVelocity = new Vector3
+        (
+            x: Mathf.Sin(Rotation.Y) * -10.0f,
+            y: _vertical * 10.0f,
+            z: Mathf.Cos(Rotation.Y) * -10.0f
+        );
         base._IntegrateForces(state);
     }
 }
